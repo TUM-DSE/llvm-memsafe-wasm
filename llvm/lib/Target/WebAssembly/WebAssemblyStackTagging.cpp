@@ -47,6 +47,7 @@
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/IntrinsicsWebAssembly.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
@@ -56,12 +57,14 @@
 #include "llvm/Support/Alignment.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/MemoryTaggingSupport.h"
 #include <algorithm>
 #include <cassert>
 #include <memory>
+#include <utility>
 
 using namespace llvm;
 
@@ -95,15 +98,25 @@ private:
     // if (MergeInit)
     // AU.addRequired<AAResultsWrapperPass>();
   }
+
+  bool isAllocKind(Attribute Attr, AllocFnKind Kind) const {
+    if (!Attr.hasAttribute(Attribute::AllocKind))
+      return false;
+
+    return (Attr.getAllocKind() & Kind) != AllocFnKind::Unknown;
+  }
 };
 
 bool WebAssemblyStackTagging::runOnFunction(Function &F) {
-  if (!F.hasFnAttribute(Attribute::SanitizeWasmMemSafety))
+  if (!F.hasFnAttribute(Attribute::SanitizeWasmMemSafety) ||
+      F.getName().starts_with("__wasm_memsafety_"))
     return false;
 
   DataLayout DL = F.getParent()->getDataLayout();
 
   SmallVector<AllocaInst *, 8> AllocaInsts;
+  SmallVector<std::pair<AllocFnKind, CallInst *>, 8> CallsToAllocFunctions;
+
   for (auto &BB : F) {
     for (auto &I : BB) {
       if (auto *Alloca = dyn_cast<AllocaInst>(&I)) {
@@ -114,6 +127,69 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
         // for [i8 x 16] and some more cases
         AllocaInsts.emplace_back(Alloca);
       }
+      if (auto *Call = dyn_cast<CallInst>(&I)) {
+        auto *CalledFunction = Call->getCalledFunction();
+        auto Attr =
+            CalledFunction->getFnAttribute(Attribute::AttrKind::AllocKind);
+        if (Attr.hasAttribute(Attribute::AllocKind)) {
+          if (isAllocKind(Attr, AllocFnKind::Alloc)) {
+            CallsToAllocFunctions.emplace_back(
+                std::pair(AllocFnKind::Alloc, Call));
+          } else if (isAllocKind(Attr, AllocFnKind::Realloc)) {
+            CallsToAllocFunctions.emplace_back(
+                std::pair(AllocFnKind::Realloc, Call));
+          } else if (isAllocKind(Attr, AllocFnKind::Free)) {
+            CallsToAllocFunctions.emplace_back(
+                std::pair(AllocFnKind::Free, Call));
+          }
+          // if (isAllocKind(Attr, AllocFnKind::Uninitialized)) {
+          //   errs() << "AllocKind Uninitialized\n";
+          // }
+          // if (isAllocKind(Attr, AllocFnKind::Zeroed)) {
+          //   errs() << "AllocKind Zeroed\n";
+          // }
+          // if (isAllocKind(Attr, AllocFnKind::Aligned)) {
+          //   errs() << "AllocKind Aligned\n";
+          // }
+        }
+      }
+    }
+  }
+
+  auto SafeMallocFn = F.getParent()->getOrInsertFunction(
+      "__wasm_memsafety_malloc",
+      FunctionType::get(PointerType::getInt8PtrTy(F.getContext()),
+                        {
+                            Type::getInt32Ty(F.getContext()),
+                            Type::getInt32Ty(F.getContext()),
+                        },
+                        false));
+  auto SafeFreeFn = F.getParent()->getOrInsertFunction(
+      "__wasm_memsafety_free",
+      FunctionType::get(PointerType::getInt8PtrTy(F.getContext()),
+                        {
+                            Type::getInt8PtrTy(F.getContext()),
+                        },
+                        false));
+
+  for (auto [Kind, Call] : CallsToAllocFunctions) {
+    switch (Kind) {
+    case llvm::AllocFnKind::Alloc: {
+      // TODO: handle functions other than c malloc
+      auto *NewCall = CallInst::Create(
+          SafeMallocFn, {Call->getArgOperand(0),
+                         ConstantInt::get(Type::getInt32Ty(F.getContext()),
+                                          /* align = */ 16)}, Call->getName(), Call);
+      Call->replaceAllUsesWith(NewCall);
+      break;
+    }
+    case llvm::AllocFnKind::Free: {
+      auto *NewCall = CallInst::Create(SafeFreeFn, {Call->getArgOperand(0)}, Call->getName(), Call);
+      Call->replaceAllUsesWith(NewCall);
+      break;
+    }
+    default:
+      llvm_unreachable("Not yet implemented.");
     }
   }
 
@@ -188,8 +264,6 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
       FreeSegmentInst->insertBefore(Terminator);
     }
   }
-
-  F.dump();
 
   return true;
 }
