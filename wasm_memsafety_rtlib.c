@@ -40,7 +40,7 @@ void *__wasm_memsafety_malloc(size_t align, size_t size) {
         newHead->ptr = mem;
         newHead->size = size;
         fprintf(stderr, "Tagging memory %p, size %zu\n", mem, size);
-        // TODO: tag the memory here
+        __builtin_wasm_segment_new_stack(mem, size);
     }
 
     return mem;
@@ -48,8 +48,8 @@ void *__wasm_memsafety_malloc(size_t align, size_t size) {
 
 void __wasm_memsafety_free(void *ptr) {
     Node *node = __wasm_memsafety_find(&head, ptr);
-    // TODO: untag the memory here
-    fprintf(stderr, "Tagging memory %p, size %zu\n", ptr, node->size);
+    __builtin_wasm_segment_free(node->ptr, node->size);
+    fprintf(stderr, "Tagging memory %p, size %zu\n", node->ptr, node->size);
 
-    free(ptr);
+    free(node->ptr);
 }
