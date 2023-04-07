@@ -3,9 +3,12 @@
 mkdir -p build
 pushd build
 
-cmake -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lldb;lld" \
+cmake -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lldb;lld;compiler-rt" \
       -DLLVM_TARGETS_TO_BUILD="WebAssembly" \
       -DLLVM_TARGET_ARCH="wasm32" \
+      -DCOMPILER_RT_BUILD_SANITIZERS="ON" \
+      -DCOMPILER_RT_BUILD_WASM_MEMSAFETY="ON" \
+      -DCOMPILER_RT_DEFAULT_TARGET_ARCH="wasm32" \
       -DLLVM_DEFAULT_TARGET_TRIPLE="wasm32-unknown-wasi" \
       -DCMAKE_BUILD_TYPE="Debug" \
       -DLLVM_ENABLE_ASSERTIONS="ON" \

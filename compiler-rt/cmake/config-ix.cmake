@@ -626,6 +626,9 @@ if(APPLE)
   list_intersect(CFI_SUPPORTED_ARCH
     ALL_CFI_SUPPORTED_ARCH
     SANITIZER_COMMON_SUPPORTED_ARCH)
+  list_intersect(WASM_MEMSAFETY_SUPPORTED_ARCH
+    ALL_WASM_MEMSAFETY_SUPPORTED_ARCH
+    ALL_WASM_MEMSAFETY_SUPPORTED_ARCH)
   list_intersect(SCUDO_STANDALONE_SUPPORTED_ARCH
     ALL_SCUDO_STANDALONE_SUPPORTED_ARCH
     SANITIZER_COMMON_SUPPORTED_ARCH)
@@ -665,6 +668,7 @@ else()
   filter_available_targets(SAFESTACK_SUPPORTED_ARCH
     ${ALL_SAFESTACK_SUPPORTED_ARCH})
   filter_available_targets(CFI_SUPPORTED_ARCH ${ALL_CFI_SUPPORTED_ARCH})
+  filter_available_targets(WASM_MEMSAFETY_SUPPORTED_ARCH ${ALL_WASM_MEMSAFETY_SUPPORTED_ARCH})
   filter_available_targets(SCUDO_STANDALONE_SUPPORTED_ARCH ${ALL_SCUDO_STANDALONE_SUPPORTED_ARCH})
   filter_available_targets(XRAY_SUPPORTED_ARCH ${ALL_XRAY_SUPPORTED_ARCH})
   filter_available_targets(SHADOWCALLSTACK_SUPPORTED_ARCH
@@ -704,7 +708,7 @@ if(COMPILER_RT_SUPPORTED_ARCH)
 endif()
 message(STATUS "Compiler-RT supported architectures: ${COMPILER_RT_SUPPORTED_ARCH}")
 
-set(ALL_SANITIZERS asan;dfsan;msan;hwasan;tsan;safestack;cfi;scudo_standalone;ubsan_minimal;gwp_asan)
+set(ALL_SANITIZERS asan;dfsan;msan;hwasan;tsan;safestack;cfi;scudo_standalone;ubsan_minimal;gwp_asan;wasm_memsafety)
 set(COMPILER_RT_SANITIZERS_TO_BUILD all CACHE STRING
     "sanitizers to build if supported on the target (all;${ALL_SANITIZERS})")
 list_replace(COMPILER_RT_SANITIZERS_TO_BUILD all "${ALL_SANITIZERS}")
@@ -823,6 +827,15 @@ if (COMPILER_RT_HAS_SANITIZER_COMMON AND CFI_SUPPORTED_ARCH)
   set(COMPILER_RT_HAS_CFI TRUE)
 else()
   set(COMPILER_RT_HAS_CFI FALSE)
+endif()
+
+if (WASM_MEMSAFETY_SUPPORTED_ARCH)
+  message(SEND_ERROR "here1")
+  set(COMPILER_RT_HAS_WASM_MEMSAFETY TRUE)
+else()
+  message(WASM_MEMSAFETY_SUPPORTED_ARCH="${WASM_MEMSAFETY_SUPPORTED_ARCH}")
+  message(SEND_ERROR "here2")
+  set(COMPILER_RT_HAS_WASM_MEMSAFETY FALSE)
 endif()
 
 #TODO(kostyak): add back Android & Fuchsia when the code settles a bit.

@@ -136,6 +136,7 @@ macro(test_target_arch arch def)
       set(CMAKE_EXE_LINKER_FLAGS ${SAVED_CMAKE_EXE_LINKER_FLAGS})
     endif()
   endif()
+  message(SEND_ERROR "here: ${arch} ${ARGN} ${CAN_TARGET_${arch}}")
   if(${CAN_TARGET_${arch}})
     list(APPEND COMPILER_RT_SUPPORTED_ARCH ${arch})
   elseif("${COMPILER_RT_DEFAULT_TARGET_ARCH}" STREQUAL "${arch}" AND
