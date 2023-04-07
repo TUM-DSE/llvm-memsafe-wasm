@@ -1358,7 +1358,8 @@ endif()
 
 ExternalProject_Add(
     libclang_rt_builtins
-    PREFIX lib/clang/17
+    PREFIX lib/clang
+    SOURCE_DIR lib/clang/17/lib
     URL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-19/libclang_rt.builtins-wasm32-wasi-19.0.tar.gz
     URL_HASH SHA512=db98bdf2d3e47df20066037125b68a21a40decfdcb4275fae0216d4fbf57bf557c135f79ca599c99e30999997f293afda9088cde1f82e733156adcfe2d31fe2b
     CONFIGURE_COMMAND ""
