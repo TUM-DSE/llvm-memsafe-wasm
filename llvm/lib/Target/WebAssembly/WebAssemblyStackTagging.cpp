@@ -191,6 +191,7 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
     default:
       llvm_unreachable("Not yet implemented.");
     }
+    Call->eraseFromParent();
   }
 
   DominatorTree DT(F);
