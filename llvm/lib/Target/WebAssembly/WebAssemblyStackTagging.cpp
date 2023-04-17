@@ -166,7 +166,7 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
                         false));
   auto SafeFreeFn = F.getParent()->getOrInsertFunction(
       "__wasm_memsafety_free",
-      FunctionType::get(PointerType::getInt8PtrTy(F.getContext()),
+      FunctionType::get(Type::getVoidTy(F.getContext()),
                         {
                             Type::getInt8PtrTy(F.getContext()),
                         },
