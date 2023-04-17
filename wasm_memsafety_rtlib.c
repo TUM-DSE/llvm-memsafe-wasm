@@ -35,12 +35,12 @@ void *__wasm_memsafety_malloc(size_t align, size_t size) {
     size_t aligned_size = (size + (align - 1)) & (~align);
     void *mem = aligned_alloc(align, aligned_size);
     if (mem) {
+        __builtin_wasm_segment_new_stack(mem, size);
         Node *newHead = (Node *) malloc(sizeof(Node));
         newHead->next = head;
         newHead->ptr = mem;
         newHead->size = size;
         fprintf(stderr, "Tagging memory %p, size %zu\n", mem, size);
-        __builtin_wasm_segment_new_stack(mem, size);
     }
 
     return mem;
@@ -48,8 +48,11 @@ void *__wasm_memsafety_malloc(size_t align, size_t size) {
 
 void __wasm_memsafety_free(void *ptr) {
     Node *node = __wasm_memsafety_find(&head, ptr);
-    __builtin_wasm_segment_free(node->ptr, node->size);
-    fprintf(stderr, "Tagging memory %p, size %zu\n", node->ptr, node->size);
+    if (node) {
+        __builtin_wasm_segment_free(node->ptr, node->size);
+        fprintf(stderr, "Tagging memory %p, size %zu\n", node->ptr, node->size);
+    }
 
     free(node->ptr);
+    free(node);
 }
