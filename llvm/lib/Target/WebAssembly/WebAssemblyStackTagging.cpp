@@ -203,22 +203,7 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
       {Type::getInt32Ty(F.getContext())});
 
   for (auto *Alloca : AllocaInsts) {
-    auto *AllocSize = Alloca->getOperand(0);
-
     Alloca->setAlignment(std::max(Alloca->getAlign(), Align(16)));
-    if (auto *Const = dyn_cast<ConstantInt>(AllocSize)) {
-      auto ZextValue = Const->getZExtValue();
-      auto AlignedValue = (ZextValue + 15) & ~0xF;
-      Alloca->setOperand(0, ConstantInt::get(Const->getType(), AlignedValue));
-    } else {
-      auto *AddVal = BinaryOperator::CreateAdd(
-          AllocSize, ConstantInt::get(AllocSize->getType(), 15));
-      AddVal->insertBefore(Alloca);
-      auto *AndVal = BinaryOperator::CreateAnd(
-          AddVal, ConstantInt::get(AllocSize->getType(), 15), "extended");
-      AndVal->insertBefore(Alloca);
-      Alloca->setOperand(0, AndVal);
-    }
 
     auto *NewStackSegmentInst =
         CallInst::Create(NewSegmentStackFunc, {Alloca, Alloca->getOperand(0)});
