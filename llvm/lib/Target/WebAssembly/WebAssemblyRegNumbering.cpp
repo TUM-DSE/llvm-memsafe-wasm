@@ -62,6 +62,8 @@ bool WebAssemblyRegNumbering::runOnMachineFunction(MachineFunction &MF) {
   LLVM_DEBUG(dbgs() << "********** Register Numbering **********\n"
                        "********** Function: "
                     << MF.getName() << '\n');
+                    
+  // MF.dump();
 
   WebAssemblyFunctionInfo &MFI = *MF.getInfo<WebAssemblyFunctionInfo>();
   MachineRegisterInfo &MRI = MF.getRegInfo();

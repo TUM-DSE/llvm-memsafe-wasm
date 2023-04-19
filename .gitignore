@@ -71,4 +71,4 @@ pythonenv*
 /lldb/docs/python_api/
 
 .direnv
-
+/*.wasm

@@ -43,6 +43,7 @@
 #include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
+#include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
@@ -51,6 +52,8 @@
 #include "llvm/IR/IntrinsicsWebAssembly.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
+#include "llvm/IR/Type.h"
+#include "llvm/IR/Value.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
@@ -58,11 +61,13 @@
 #include "llvm/Support/Casting.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/Printable.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/MemoryTaggingSupport.h"
 #include <algorithm>
 #include <cassert>
+#include <cstdint>
 #include <memory>
 #include <utility>
 
@@ -71,6 +76,12 @@ using namespace llvm;
 #define DEBUG_TYPE "wasm-stack-tagging"
 
 namespace {
+
+void replaceAllUsesWith(
+    Instruction *I, Value *NewI,
+    llvm::function_ref<bool(Use &)> ShouldReplace = [](auto &U) {
+      return true;
+    });
 
 class WebAssemblyStackTagging : public FunctionPass {
 
@@ -104,6 +115,18 @@ private:
       return false;
 
     return (Attr.getAllocKind() & Kind) != AllocFnKind::Unknown;
+  }
+
+  Value *alignAllocSize(Value *AllocSize, Instruction *InsertBefore) {
+    auto *Ty = AllocSize->getType();
+    assert(Ty->isIntegerTy(32) && "Only able to handle i32 as alloc size");
+
+    const int32_t Align = 16;
+    auto *Add = BinaryOperator::CreateAdd(
+        AllocSize, ConstantInt::get(Ty, Align - 1), "", InsertBefore);
+    auto *And = BinaryOperator::CreateAnd(
+        Add, ConstantInt::get(Ty, ~(Align - 1)), "", InsertBefore);
+    return And;
   }
 };
 
@@ -176,16 +199,19 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
     switch (Kind) {
     case llvm::AllocFnKind::Alloc: {
       // TODO: handle functions other than c malloc
-      auto *NewCall = CallInst::Create(
-          SafeMallocFn, {Call->getArgOperand(0),
-                         ConstantInt::get(Type::getInt32Ty(F.getContext()),
-                                          /* align = */ 16)}, Call->getName(), Call);
-      Call->replaceAllUsesWith(NewCall);
+      auto *NewCall =
+          CallInst::Create(SafeMallocFn,
+                           {Call->getArgOperand(0),
+                            ConstantInt::get(Type::getInt32Ty(F.getContext()),
+                                             /* align = */ 16)},
+                           Call->getName(), Call);
+      replaceAllUsesWith(Call, NewCall);
       break;
     }
     case llvm::AllocFnKind::Free: {
-      auto *NewCall = CallInst::Create(SafeFreeFn, {Call->getArgOperand(0)}, Call->getName(), Call);
-      Call->replaceAllUsesWith(NewCall);
+      auto *NewCall = CallInst::Create(SafeFreeFn, {Call->getArgOperand(0)},
+                                       Call->getName(), Call);
+      replaceAllUsesWith(Call, NewCall);
       break;
     }
     default:
@@ -205,13 +231,30 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
   for (auto *Alloca : AllocaInsts) {
     Alloca->setAlignment(std::max(Alloca->getAlign(), Align(16)));
 
+    DataLayout DL = F.getParent()->getDataLayout();
+    Value *AllocSize;
+    if (Alloca->isArrayAllocation()) {
+      auto ElementSize = DL.getTypeAllocSize(Alloca->getAllocatedType());
+      auto *NumElements = Alloca->getArraySize();
+      NumElements = CastInst::CreateIntegerCast(
+          NumElements, Type::getInt32Ty(F.getContext()), false, "", Alloca);
+      AllocSize = BinaryOperator::CreateMul(
+          NumElements, ConstantInt::get(NumElements->getType(), ElementSize),
+          "", Alloca);
+    } else {
+      AllocSize =
+          ConstantInt::get(Type::getInt32Ty(F.getContext()),
+                           DL.getTypeAllocSize(Alloca->getAllocatedType()));
+    }
+
+    // align the size to 16 bytes
+    AllocSize = this->alignAllocSize(AllocSize, Alloca);
+
     auto *NewStackSegmentInst =
-        CallInst::Create(NewSegmentStackFunc, {Alloca, Alloca->getOperand(0)});
+        CallInst::Create(NewSegmentStackFunc, {Alloca, AllocSize});
     NewStackSegmentInst->insertAfter(Alloca);
 
-    Alloca->replaceUsesWithIf(NewStackSegmentInst, [&](Use &U) {
-      return U.getUser() != NewStackSegmentInst;
-    });
+    replaceAllUsesWith(Alloca, NewStackSegmentInst);
 
     // Add free in every block that has a terminator
     // TODO: potential to optimize for code size -- create a unified return
@@ -243,8 +286,6 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
       if (!isa<ReturnInst>(Terminator) && !IsTailCall(Terminator))
         continue;
 
-      auto *AllocSize = Alloca->getOperand(0);
-
       auto *FreeSegmentInst = CallInst::Create(
           FreeSegmentStackFunc, {NewStackSegmentInst, Alloca, AllocSize});
       FreeSegmentInst->insertBefore(Terminator);
@@ -252,6 +293,109 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
   }
 
   return true;
+}
+
+struct PtrUseVisitor : public InstVisitor<PtrUseVisitor> {
+public:
+  PtrUseVisitor(Value *NewI, Use *U) : NewI(NewI), Use(U) {}
+
+  void visitInstruction(Instruction &I) {
+    auto *IntToPtr = new IntToPtrInst(NewI, Use->get()->getType(), "", &I);
+    Use->set(IntToPtr);
+  }
+
+  void visitLoadInst(LoadInst &I) {
+    // TODO: emit intrinsic to load from segment
+    auto *SegmentLoadIntr = Intrinsic::getDeclaration(
+        I.getModule(), Intrinsic::wasm_segment_load, {I.getType()});
+
+    auto *Val = CallInst::Create(SegmentLoadIntr,
+                                 {
+                                     NewI,
+                                 },
+                                 "", &I);
+    I.replaceAllUsesWith(Val);
+    I.eraseFromParent();
+  }
+
+  void visitStoreInst(StoreInst &I) {
+    if (Use->getOperandNo() == 0) {
+      // Pointer is being stored to memory
+      // TODO
+    } else {
+      // Pointer is used to access memory
+      auto *SegmentStoreIntr = Intrinsic::getDeclaration(
+          I.getModule(), Intrinsic::wasm_segment_store,
+          {I.getValueOperand()->getType()});
+
+      CallInst::Create(SegmentStoreIntr,
+                       {
+                           NewI,
+                           I.getValueOperand(),
+                       },
+                       "", &I);
+      I.eraseFromParent();
+    }
+  }
+
+  void visitGetElementPtrInst(GetElementPtrInst &GEP) {
+    // This function transforms a GEP to a series of adds that should calculate
+    // the same address
+    Value *Base = NewI;
+    Type *Ty = NewI->getType();
+    Value *Offset = ConstantInt::get(Ty, 0);
+
+    for (unsigned I = 0; I < GEP.getNumIndices(); ++I) {
+      Value *Index = GEP.getOperand(I + 1);
+
+      if (Offset->getType()->getIntegerBitWidth() < Ty->getIntegerBitWidth()) {
+        Offset = new ZExtInst(Offset, Ty, "", &GEP);
+      }
+      if (Index->getType()->getIntegerBitWidth() < Ty->getIntegerBitWidth()) {
+        Index = new ZExtInst(Index, Ty, "", &GEP);
+      }
+
+      Value *Multiplier;
+      if (GEP.getSourceElementType()->isArrayTy()) {
+        Multiplier = ConstantInt::get(Ty, GEP.getSourceElementType()
+                                                  ->getArrayElementType()
+                                                  ->getPrimitiveSizeInBits() /
+                                              8);
+      } else {
+        GEP.dump();
+        llvm_unreachable("Unable to handle GEP SourceElementType");
+      }
+      Index = BinaryOperator::CreateMul(Index, Multiplier, "", &GEP);
+
+      Offset = BinaryOperator::CreateAdd(Offset, Index, "", &GEP);
+    }
+
+    Instruction *Result = BinaryOperator::CreateAdd(Base, Offset, "", &GEP);
+    replaceAllUsesWith(&GEP, Result);
+    GEP.eraseFromParent();
+  }
+
+private:
+  Value *NewI;
+  Use *Use;
+};
+
+void replaceAllUsesWith(Instruction *I, Value *NewI,
+                        llvm::function_ref<bool(Use &)> ShouldReplace) {
+  std::list<Use *> Uses;
+  for (auto &Use : I->uses()) {
+    if (Use.getUser() != NewI && ShouldReplace(Use))
+      Uses.emplace_back(&Use);
+  }
+
+  for (auto *Use : Uses) {
+    // Otherwise, insert int to ptr
+    Instruction *User = dyn_cast<Instruction>(Use->getUser());
+    assert(User);
+
+    PtrUseVisitor Visitor(NewI, Use);
+    Visitor.visit(User);
+  }
 }
 
 } // namespace
