@@ -32,7 +32,7 @@ struct Node *__wasm_memsafety_find(Node **head, tagged_ptr_t ptr) {
     return NULL;
 }
 
-void *__wasm_memsafety_malloc(size_t align, size_t size) {
+tagged_ptr_t __wasm_memsafety_malloc(size_t align, size_t size) {
     align = align > 16 ? align : 16;
     // round up size to the next multiple of align
     // TODO: check if this works for non powers of two

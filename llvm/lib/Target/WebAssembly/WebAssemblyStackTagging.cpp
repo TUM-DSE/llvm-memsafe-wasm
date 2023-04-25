@@ -181,7 +181,7 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
 
   auto SafeMallocFn = F.getParent()->getOrInsertFunction(
       "__wasm_memsafety_malloc",
-      FunctionType::get(PointerType::getInt8PtrTy(F.getContext()),
+      FunctionType::get(Type::getInt64Ty(F.getContext()),
                         {
                             Type::getInt32Ty(F.getContext()),
                             Type::getInt32Ty(F.getContext()),
@@ -191,7 +191,7 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
       "__wasm_memsafety_free",
       FunctionType::get(Type::getVoidTy(F.getContext()),
                         {
-                            Type::getInt8PtrTy(F.getContext()),
+                            Type::getInt64Ty(F.getContext()),
                         },
                         false));
 
@@ -209,6 +209,9 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
       break;
     }
     case llvm::AllocFnKind::Free: {
+      // TODO: we need a way to get the original pointer... or we just make the free function accept a pointer
+      // This will be a problem for other functions taking pointers as well, so we might just get it right before
+      // hacking something that just works for this function.
       auto *NewCall = CallInst::Create(SafeFreeFn, {Call->getArgOperand(0)},
                                        Call->getName(), Call);
       replaceAllUsesWith(Call, NewCall);
@@ -356,11 +359,14 @@ public:
       }
 
       Value *Multiplier;
-      if (GEP.getSourceElementType()->isArrayTy()) {
-        Multiplier = ConstantInt::get(Ty, GEP.getSourceElementType()
+      Type *SourceElemTy = GEP.getSourceElementType();
+      if (SourceElemTy->isArrayTy()) {
+        Multiplier = ConstantInt::get(Ty, SourceElemTy
                                                   ->getArrayElementType()
                                                   ->getPrimitiveSizeInBits() /
                                               8);
+      } else if (SourceElemTy->isSingleValueType()) {
+        Multiplier = ConstantInt::get(Ty, SourceElemTy->getPrimitiveSizeInBits() / 8);
       } else {
         GEP.dump();
         llvm_unreachable("Unable to handle GEP SourceElementType");
