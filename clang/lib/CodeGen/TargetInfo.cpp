@@ -12329,6 +12329,7 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() {
   }
 
   case llvm::Triple::wasm32:
+  case llvm::Triple::wasm32t:
   case llvm::Triple::wasm64: {
     WebAssemblyABIInfo::ABIKind Kind = WebAssemblyABIInfo::MVP;
     if (getTarget().getABI() == "experimental-mv")

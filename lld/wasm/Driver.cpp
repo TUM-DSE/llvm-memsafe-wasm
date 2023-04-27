@@ -509,7 +509,7 @@ static void readConfigs(opt::InputArgList &args) {
     StringRef s = arg->getValue();
     if (s == "wasm32")
       config->is64 = false;
-    else if (s == "wasm64")
+    else if (s == "wasm64" || s == "wasm32t")
       config->is64 = true;
     else
       error("invalid target architecture: " + s);

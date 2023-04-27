@@ -456,6 +456,7 @@ std::string tools::getCPUName(const Driver &D, const ArgList &Args,
     return getAMDGPUTargetGPU(T, Args);
 
   case llvm::Triple::wasm32:
+  case llvm::Triple::wasm32t:
   case llvm::Triple::wasm64:
     return std::string(getWebAssemblyTargetCPU(Args));
   }
@@ -511,6 +512,7 @@ void tools::getTargetFeatures(const Driver &D, const llvm::Triple &Triple,
     hexagon::getHexagonTargetFeatures(D, Args, Features);
     break;
   case llvm::Triple::wasm32:
+  case llvm::Triple::wasm32t:
   case llvm::Triple::wasm64:
     getWebAssemblyTargetFeatures(Args, Features);
     break;

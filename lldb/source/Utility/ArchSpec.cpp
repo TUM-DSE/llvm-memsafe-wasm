@@ -236,6 +236,8 @@ static const CoreDefinition g_core_definitions[] = {
 
     {eByteOrderLittle, 4, 1, 4, llvm::Triple::wasm32, ArchSpec::eCore_wasm32,
      "wasm32"},
+    {eByteOrderLittle, 8, 1, 4, llvm::Triple::wasm32t, ArchSpec::eCore_wasm32t,
+     "wasm32t"},
 };
 
 // Ensure that we have an entry in the g_core_definitions for each core. If you

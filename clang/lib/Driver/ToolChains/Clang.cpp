@@ -423,6 +423,7 @@ static bool useFramePointerForTargetByDefault(const ArgList &Args,
   switch (Triple.getArch()) {
   case llvm::Triple::xcore:
   case llvm::Triple::wasm32:
+  case llvm::Triple::wasm32t:
   case llvm::Triple::wasm64:
   case llvm::Triple::msp430:
     // XCore never wants frame pointers, regardless of OS.
@@ -1721,6 +1722,7 @@ void Clang::RenderTargetOptions(const llvm::Triple &EffectiveTriple,
     break;
 
   case llvm::Triple::wasm32:
+  case llvm::Triple::wasm32t:
   case llvm::Triple::wasm64:
     AddWebAssemblyTargetArgs(Args, CmdArgs);
     break;
@@ -2521,6 +2523,7 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
       default:
         break;
       case llvm::Triple::wasm32:
+      case llvm::Triple::wasm32t:
       case llvm::Triple::wasm64:
         if (Value == "--no-type-check") {
           CmdArgs.push_back("-mno-type-check");

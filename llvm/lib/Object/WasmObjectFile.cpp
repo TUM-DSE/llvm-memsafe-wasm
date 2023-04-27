@@ -32,6 +32,8 @@
 
 #define DEBUG_TYPE "wasm-object"
 
+// TODO(martin): actually set HasTaggedMemory here when we encounter something like that
+
 using namespace llvm;
 using namespace object;
 
@@ -1835,13 +1837,13 @@ section_iterator WasmObjectFile::section_end() const {
 }
 
 uint8_t WasmObjectFile::getBytesInAddress() const {
-  return HasMemory64 ? 8 : 4;
+  return HasMemory64 || HasTaggedMem ? 8 : 4;
 }
 
 StringRef WasmObjectFile::getFileFormatName() const { return "WASM"; }
 
 Triple::ArchType WasmObjectFile::getArch() const {
-  return HasMemory64 ? Triple::wasm64 : Triple::wasm32;
+  return HasMemory64 ? Triple::wasm64 : HasTaggedMem ? Triple::wasm32t : Triple::wasm32;
 }
 
 Expected<SubtargetFeatures> WasmObjectFile::getFeatures() const {

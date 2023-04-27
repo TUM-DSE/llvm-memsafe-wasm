@@ -70,6 +70,8 @@ LLVMInitializeWebAssemblyDisassembler() {
                                          createWebAssemblyDisassembler);
   TargetRegistry::RegisterMCDisassembler(getTheWebAssemblyTarget64(),
                                          createWebAssemblyDisassembler);
+  TargetRegistry::RegisterMCDisassembler(getTheWebAssemblyTarget32Tagged(),
+                                         createWebAssemblyDisassembler);
 }
 
 static int nextByte(ArrayRef<uint8_t> Bytes, uint64_t &Size) {

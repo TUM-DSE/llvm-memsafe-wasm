@@ -211,6 +211,30 @@ protected:
   void getTargetDefines(const LangOptions &Opts,
                         MacroBuilder &Builder) const override;
 };
+
+class LLVM_LIBRARY_VISIBILITY WebAssembly32TaggedTargetInfo
+    : public WebAssemblyTargetInfo {
+public:
+  explicit WebAssembly32TaggedTargetInfo(const llvm::Triple &T,
+                                   const TargetOptions &Opts)
+      : WebAssemblyTargetInfo(T, Opts) {
+    LongAlign = LongWidth = 64;
+    PointerAlign = PointerWidth = 64;
+    SizeType = UnsignedLong; // TODO(martin): change this to unsigned int
+    PtrDiffType = SignedLong;
+    IntPtrType = SignedLong;
+    if (T.isOSEmscripten())
+      resetDataLayout("e-m:e-p:64:64-p10:8:8-p20:8:8-i64:64-f128:64-n32:64-"
+                      "S128-ni:1:10:20");
+    else
+      resetDataLayout(
+          "e-m:e-p:64:64-p10:8:8-p20:8:8-i64:64-n32:64-S128-ni:1:10:20");
+  }
+
+protected:
+  void getTargetDefines(const LangOptions &Opts,
+                        MacroBuilder &Builder) const override;
+};
 } // namespace targets
 } // namespace clang
 #endif // LLVM_CLANG_LIB_BASIC_TARGETS_WEBASSEMBLY_H

@@ -835,6 +835,8 @@ getRelocationResolver(const ObjectFile &Obj) {
   } else if (Obj.isWasm()) {
     if (Obj.getArch() == Triple::wasm32)
       return {supportsWasm32, resolveWasm32};
+    if (Obj.getArch() == Triple::wasm32t)
+      return {supportsWasm32, resolveWasm32}; // TODO(martin): check if we need new functions here
     if (Obj.getArch() == Triple::wasm64)
       return {supportsWasm64, resolveWasm64};
     return {nullptr, nullptr};

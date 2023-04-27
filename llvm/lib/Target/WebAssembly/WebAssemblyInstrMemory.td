@@ -174,36 +174,36 @@ defm : StorePat<i64, truncstorei32, "STORE32_I64">;
 
 let UseNamedOperandTable = 1 in {
 
-defm SEGMENT_NEW_A32 : I<(outs I32:$dst),
+defm SEGMENT_NEW_A64 : I<(outs I64:$dst),
                         (ins I32:$size),
-                        (outs), (ins I32:$size),
+                        (outs), (ins),
                         [],
                         "segment.new\t$dst, $size", "segment.new",
                         0xfa00, false>,
                         Requires<[]>; // HasMemSafety
 
-defm SEGMENT_FREE_A32 : I<(outs),
-                        (ins P2Align:$p2align, offset32_op:$off, I32:$addr, I32:$size),
+defm SEGMENT_FREE_A64 : I<(outs),
+                        (ins P2Align:$p2align, offset64_op:$off, I64:$addr, I32:$size),
                         (outs),
-                        (ins P2Align:$p2align, offset32_op:$off),
+                        (ins P2Align:$p2align, offset64_op:$off),
                         [],
                         "segment.free\t${off}(${addr})${p2align}, $size", "segment.free\t${off}${p2align}",
                         0xfa01, false>,
                         Requires<[]>; // HasMemSafety
 
-defm SEGMENT_STACK_NEW_A32 : I<(outs I32:$dst),
-                               (ins P2Align:$p2align, offset32_op:$off, I32:$sp, I32:$size),
+defm SEGMENT_STACK_NEW_A64 : I<(outs I64:$dst),
+                               (ins P2Align:$p2align, offset64_op:$off, I64:$sp, I32:$size),
                                (outs),
-                               (ins P2Align:$p2align, offset32_op:$off),
+                               (ins P2Align:$p2align, offset64_op:$off),
                                [],
                                "segment.stack_new\t$dst, ${off}(${sp})${p2align}, $size", "segment.stack_new\t${off}${p2align}",
                                0xfa02, false>,
                         Requires<[]>; // HasMemSafety
 
-defm SEGMENT_STACK_FREE_A32 : I<(outs),
-                                (ins P2Align:$p2align, offset32_op:$off, I32:$addr, I32:$sp, I32:$size),
+defm SEGMENT_STACK_FREE_A64 : I<(outs),
+                                (ins P2Align:$p2align, offset64_op:$off, I64:$addr, I64:$sp, I32:$size),
                                 (outs),
-                                (ins P2Align:$p2align, offset32_op:$off),
+                                (ins P2Align:$p2align, offset64_op:$off),
                                 [],
                                 "segment.stack_free\t${off}(${addr})${p2align}, $sp, $size", "segment.stack_free\t${off}${p2align}",
                                 0xfa03, false>,
@@ -211,13 +211,13 @@ defm SEGMENT_STACK_FREE_A32 : I<(outs),
 }
 
 def : Pat<(int_wasm_segment_new I32:$size),
-          (!cast<NI>(SEGMENT_NEW_A32) I32:$size)>;
-def : Pat<(int_wasm_segment_free (AddrOps32 offset32_op:$offset, I32:$addr), I32:$size),
-          (!cast<NI>(SEGMENT_FREE_A32) 0, offset32_op:$offset, I32:$addr, I32:$size)>;
-def : Pat<(int_wasm_segment_stack_new (AddrOps32 offset32_op:$offset, I32:$addr), I32:$size),
-          (!cast<NI>(SEGMENT_STACK_NEW_A32) 0, offset32_op:$offset, I32:$addr, I32:$size)>;
-def : Pat<(int_wasm_segment_stack_free (AddrOps32 offset32_op:$offset, I32:$addr), I32:$sp, I32:$size),
-          (!cast<NI>(SEGMENT_STACK_FREE_A32) 0, offset32_op:$offset, I32:$addr, I32:$sp, I32:$size)>;
+          (!cast<NI>(SEGMENT_NEW_A64) I32:$size)>;
+def : Pat<(int_wasm_segment_free (AddrOps64 offset64_op:$offset, I64:$addr), I32:$size),
+          (!cast<NI>(SEGMENT_FREE_A64) 0, offset64_op:$offset, I64:$addr, I32:$size)>;
+def : Pat<(int_wasm_segment_stack_new (AddrOps64 offset64_op:$offset, I64:$addr), I32:$size),
+          (!cast<NI>(SEGMENT_STACK_NEW_A64) 0, offset64_op:$offset, I64:$addr, I32:$size)>;
+def : Pat<(int_wasm_segment_stack_free (AddrOps64 offset64_op:$offset, I64:$addr), I64:$sp, I32:$size),
+          (!cast<NI>(SEGMENT_STACK_FREE_A64) 0, offset64_op:$offset, I64:$addr, I64:$sp, I32:$size)>;
 
 
 multiclass MemoryOps<WebAssemblyRegClass rc, string B> {

@@ -42,7 +42,9 @@ DynamicLoader *DynamicLoaderWasmDYLD::CreateInstance(Process *process,
   if (!should_create) {
     should_create =
         (process->GetTarget().GetArchitecture().GetTriple().getArch() ==
-         llvm::Triple::wasm32);
+         llvm::Triple::wasm32) ||
+        (process->GetTarget().GetArchitecture().GetTriple().getArch() ==
+         llvm::Triple::wasm32t);
   }
 
   if (should_create)

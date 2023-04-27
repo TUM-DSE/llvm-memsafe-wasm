@@ -674,6 +674,21 @@ TargetInfo *AllocateTarget(const llvm::Triple &Triple,
       default:
         return nullptr;
     }
+  case llvm::Triple::wasm32t:
+    if (Triple.getSubArch() != llvm::Triple::NoSubArch ||
+        Triple.getVendor() != llvm::Triple::UnknownVendor ||
+        !Triple.isOSBinFormatWasm())
+      return nullptr;
+    switch (os) {
+      case llvm::Triple::WASI:
+        return new WASITargetInfo<WebAssembly32TaggedTargetInfo>(Triple, Opts);
+      case llvm::Triple::Emscripten:
+        return new EmscriptenTargetInfo<WebAssembly32TaggedTargetInfo>(Triple, Opts);
+      case llvm::Triple::UnknownOS:
+        return new WebAssemblyOSTargetInfo<WebAssembly32TaggedTargetInfo>(Triple, Opts);
+      default:
+        return nullptr;
+    }
 
   case llvm::Triple::dxil:
     return new DirectXTargetInfo(Triple,Opts);

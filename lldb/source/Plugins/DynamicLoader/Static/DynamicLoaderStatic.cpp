@@ -37,6 +37,7 @@ DynamicLoader *DynamicLoaderStatic::CreateInstance(Process *process,
       switch(arch_type) {
         case llvm::Triple::hexagon:
         case llvm::Triple::wasm32:
+        case llvm::Triple::wasm32t:
         case llvm::Triple::wasm64:
           break;
         default:

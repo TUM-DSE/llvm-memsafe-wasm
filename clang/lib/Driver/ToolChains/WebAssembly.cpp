@@ -65,7 +65,9 @@ void wasm::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   ArgStringList CmdArgs;
 
   CmdArgs.push_back("-m");
-  if (ToolChain.getTriple().isArch64Bit())
+  if (ToolChain.getTriple().isTaggedWasm())
+    CmdArgs.push_back("wasm32t");
+  else if (ToolChain.getTriple().isArch64Bit())
     CmdArgs.push_back("wasm64");
   else
     CmdArgs.push_back("wasm32");

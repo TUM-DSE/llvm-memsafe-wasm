@@ -1146,6 +1146,7 @@ public:
 extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeWebAssemblyAsmParser() {
   RegisterMCAsmParser<WebAssemblyAsmParser> X(getTheWebAssemblyTarget32());
   RegisterMCAsmParser<WebAssemblyAsmParser> Y(getTheWebAssemblyTarget64());
+  RegisterMCAsmParser<WebAssemblyAsmParser> Z(getTheWebAssemblyTarget32Tagged());
 }
 
 #define GET_REGISTER_MATCHER

@@ -1308,7 +1308,7 @@ void LowerTypeTestsModule::buildBitSetsFromFunctions(
       Arch == Triple::thumb || Arch == Triple::aarch64 ||
       Arch == Triple::riscv32 || Arch == Triple::riscv64)
     buildBitSetsFromFunctionsNative(TypeIds, Functions);
-  else if (Arch == Triple::wasm32 || Arch == Triple::wasm64)
+  else if (Arch == Triple::wasm32 ||Arch == Triple::wasm32t || Arch == Triple::wasm64)
     buildBitSetsFromFunctionsWASM(TypeIds, Functions);
   else
     report_fatal_error("Unsupported architecture for jump tables");

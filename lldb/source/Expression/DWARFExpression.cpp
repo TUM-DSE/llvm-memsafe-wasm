@@ -932,7 +932,8 @@ bool DWARFExpression::Evaluate(
     case DW_OP_addr:
       stack.push_back(Scalar(opcodes.GetAddress(&offset)));
       if (target &&
-          target->GetArchitecture().GetCore() == ArchSpec::eCore_wasm32) {
+          (target->GetArchitecture().GetCore() == ArchSpec::eCore_wasm32 ||
+           target->GetArchitecture().GetCore() == ArchSpec::eCore_wasm32)) {
         // wasm file sections aren't mapped into memory, therefore addresses can
         // never point into a file section and are always LoadAddresses.
         stack.back().SetValueType(Value::ValueType::LoadAddress);
@@ -2535,7 +2536,8 @@ bool DWARFExpression::Evaluate(
       lldb::addr_t value = dwarf_cu->ReadAddressFromDebugAddrSection(index);
       stack.push_back(Scalar(value));
       if (target &&
-          target->GetArchitecture().GetCore() == ArchSpec::eCore_wasm32) {
+          (target->GetArchitecture().GetCore() == ArchSpec::eCore_wasm32 ||
+           target->GetArchitecture().GetCore() == ArchSpec::eCore_wasm32)) {
         // wasm file sections aren't mapped into memory, therefore addresses can
         // never point into a file section and are always LoadAddresses.
         stack.back().SetValueType(Value::ValueType::LoadAddress);

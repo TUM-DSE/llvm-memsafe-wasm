@@ -308,3 +308,9 @@ void WebAssembly64TargetInfo::getTargetDefines(const LangOptions &Opts,
   WebAssemblyTargetInfo::getTargetDefines(Opts, Builder);
   defineCPUMacros(Builder, "wasm64", /*Tuning=*/false);
 }
+
+void WebAssembly32TaggedTargetInfo::getTargetDefines(const LangOptions &Opts,
+                                               MacroBuilder &Builder) const {
+  WebAssemblyTargetInfo::getTargetDefines(Opts, Builder);
+  defineCPUMacros(Builder, "wasm32t", /*Tuning=*/false);
+}

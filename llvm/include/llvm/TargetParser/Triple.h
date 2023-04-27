@@ -103,6 +103,7 @@ public:
     lanai,          // Lanai: Lanai 32-bit
     wasm32,         // WebAssembly with 32-bit pointers
     wasm64,         // WebAssembly with 64-bit pointers
+    wasm32t,         // WebAssembly with 32-bit pointers (tagged)
     renderscript32, // 32-bit RenderScript
     renderscript64, // 64-bit RenderScript
     ve,             // NEC SX-Aurora Vector Engine
@@ -947,7 +948,12 @@ public:
 
   /// Tests whether the target is wasm (32- and 64-bit).
   bool isWasm() const {
-    return getArch() == Triple::wasm32 || getArch() == Triple::wasm64;
+    return getArch() == Triple::wasm32 || getArch() == Triple::wasm64 ||
+           getArch() == Triple::wasm32t;
+  }
+
+  bool isTaggedWasm() const {
+    return getArch() == Triple::wasm32t;
   }
 
   // Tests whether the target is CSKY

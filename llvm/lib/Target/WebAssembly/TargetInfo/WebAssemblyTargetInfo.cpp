@@ -25,12 +25,18 @@ Target &llvm::getTheWebAssemblyTarget64() {
   static Target TheWebAssemblyTarget64;
   return TheWebAssemblyTarget64;
 }
+Target &llvm::getTheWebAssemblyTarget32Tagged() {
+  static Target TheWebAssemblyTarget32Tagged;
+  return TheWebAssemblyTarget32Tagged;
+}
 
 extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeWebAssemblyTargetInfo() {
   RegisterTarget<Triple::wasm32> X(getTheWebAssemblyTarget32(), "wasm32",
                                    "WebAssembly 32-bit", "WebAssembly");
   RegisterTarget<Triple::wasm64> Y(getTheWebAssemblyTarget64(), "wasm64",
                                    "WebAssembly 64-bit", "WebAssembly");
+  RegisterTarget<Triple::wasm32t> Z(getTheWebAssemblyTarget32Tagged(), "wasm32t",
+                                   "WebAssembly 32-bit (tagged)", "WebAssembly");
 }
 
 // Defines llvm::WebAssembly::getWasm64Opcode llvm::WebAssembly::getStackOpcode

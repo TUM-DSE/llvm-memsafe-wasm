@@ -290,6 +290,7 @@ private:
   bool HasLinkingSection = false;
   bool HasDylinkSection = false;
   bool HasMemory64 = false;
+  bool HasTaggedMem = false;
   wasm::WasmLinkingData LinkingData;
   uint32_t NumImportedGlobals = 0;
   uint32_t NumImportedTables = 0;

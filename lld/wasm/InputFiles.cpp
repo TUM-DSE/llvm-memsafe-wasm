@@ -833,7 +833,7 @@ void BitcodeFile::parse() {
 
   Triple t(obj->getTargetTriple());
   if (!t.isWasm()) {
-    error(toString(this) + ": machine type must be wasm32 or wasm64");
+    error(toString(this) + ": machine type must be wasm32, wasm32t, or wasm64");
     return;
   }
   checkArch(t.getArch());

@@ -55,6 +55,8 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeWebAssemblyTarget() {
       getTheWebAssemblyTarget32());
   RegisterTargetMachine<WebAssemblyTargetMachine> Y(
       getTheWebAssemblyTarget64());
+  RegisterTargetMachine<WebAssemblyTargetMachine> Z(
+      getTheWebAssemblyTarget32Tagged());
 
   // Register backend passes
   auto &PR = *PassRegistry::getPassRegistry();
