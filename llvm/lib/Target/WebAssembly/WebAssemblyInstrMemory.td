@@ -86,6 +86,11 @@ multiclass LoadPat<ValueType ty, SDPatternOperator kind, string Name> {
                                      offset64_op:$offset,
                                      I64:$addr)>,
                                      Requires<[HasAddr64]>;
+      def : Pat<(ty (kind (AddrOps64 offset64_op:$offset, I64:$addr))),
+           (!cast<NI>(Name # "_A64") 0,
+                                     offset64_op:$offset,
+                                     I64:$addr)>,
+                                     Requires<[HasMemSafety]>;
 }
 
 defm : LoadPat<i32, load, "LOAD_I32">;
@@ -174,36 +179,36 @@ defm : StorePat<i64, truncstorei32, "STORE32_I64">;
 
 let UseNamedOperandTable = 1 in {
 
-defm SEGMENT_NEW_A32 : I<(outs I32:$dst),
+defm SEGMENT_NEW_A64 : I<(outs I64:$dst),
                         (ins I32:$size),
-                        (outs), (ins I32:$size),
+                        (outs), (ins),
                         [],
                         "segment.new\t$dst, $size", "segment.new",
                         0xfa00, false>,
                         Requires<[]>; // HasMemSafety
 
-defm SEGMENT_FREE_A32 : I<(outs),
-                        (ins P2Align:$p2align, offset32_op:$off, I32:$addr, I32:$size),
+defm SEGMENT_FREE_A64 : I<(outs),
+                        (ins P2Align:$p2align, offset64_op:$off, I64:$addr, I32:$size),
                         (outs),
-                        (ins P2Align:$p2align, offset32_op:$off),
+                        (ins P2Align:$p2align, offset64_op:$off),
                         [],
                         "segment.free\t${off}(${addr})${p2align}, $size", "segment.free\t${off}${p2align}",
                         0xfa01, false>,
                         Requires<[]>; // HasMemSafety
 
-defm SEGMENT_STACK_NEW_A32 : I<(outs I32:$dst),
-                               (ins P2Align:$p2align, offset32_op:$off, I32:$sp, I32:$size),
+defm SEGMENT_STACK_NEW_A64 : I<(outs I64:$dst),
+                               (ins P2Align:$p2align, offset64_op:$off, I64:$sp, I32:$size),
                                (outs),
-                               (ins P2Align:$p2align, offset32_op:$off),
+                               (ins P2Align:$p2align, offset64_op:$off),
                                [],
                                "segment.stack_new\t$dst, ${off}(${sp})${p2align}, $size", "segment.stack_new\t${off}${p2align}",
                                0xfa02, false>,
                         Requires<[]>; // HasMemSafety
 
-defm SEGMENT_STACK_FREE_A32 : I<(outs),
-                                (ins P2Align:$p2align, offset32_op:$off, I32:$addr, I32:$sp, I32:$size),
+defm SEGMENT_STACK_FREE_A64 : I<(outs),
+                                (ins P2Align:$p2align, offset64_op:$off, I64:$addr, I64:$sp, I32:$size),
                                 (outs),
-                                (ins P2Align:$p2align, offset32_op:$off),
+                                (ins P2Align:$p2align, offset64_op:$off),
                                 [],
                                 "segment.stack_free\t${off}(${addr})${p2align}, $sp, $size", "segment.stack_free\t${off}${p2align}",
                                 0xfa03, false>,
@@ -211,13 +216,52 @@ defm SEGMENT_STACK_FREE_A32 : I<(outs),
 }
 
 def : Pat<(int_wasm_segment_new I32:$size),
-          (!cast<NI>(SEGMENT_NEW_A32) I32:$size)>;
-def : Pat<(int_wasm_segment_free (AddrOps32 offset32_op:$offset, I32:$addr), I32:$size),
-          (!cast<NI>(SEGMENT_FREE_A32) 0, offset32_op:$offset, I32:$addr, I32:$size)>;
-def : Pat<(int_wasm_segment_stack_new (AddrOps32 offset32_op:$offset, I32:$addr), I32:$size),
-          (!cast<NI>(SEGMENT_STACK_NEW_A32) 0, offset32_op:$offset, I32:$addr, I32:$size)>;
-def : Pat<(int_wasm_segment_stack_free (AddrOps32 offset32_op:$offset, I32:$addr), I32:$sp, I32:$size),
-          (!cast<NI>(SEGMENT_STACK_FREE_A32) 0, offset32_op:$offset, I32:$addr, I32:$sp, I32:$size)>;
+          (!cast<NI>(SEGMENT_NEW_A64) I32:$size)>;
+def : Pat<(int_wasm_segment_free (AddrOps64 offset64_op:$offset, I64:$addr), I32:$size),
+          (!cast<NI>(SEGMENT_FREE_A64) 0, offset64_op:$offset, I64:$addr, I32:$size)>;
+def : Pat<(int_wasm_segment_stack_new (AddrOps64 offset64_op:$offset, I64:$addr), I32:$size),
+          (!cast<NI>(SEGMENT_STACK_NEW_A64) 0, offset64_op:$offset, I64:$addr, I32:$size)>;
+def : Pat<(int_wasm_segment_stack_free (AddrOps64 offset64_op:$offset, I64:$addr), I64:$sp, I32:$size),
+          (!cast<NI>(SEGMENT_STACK_FREE_A64) 0, offset64_op:$offset, I64:$addr, I64:$sp, I32:$size)>;
+
+
+
+// multiclass WebAssemblySegmentLoad<WebAssemblyRegClass rc, string Name, int Opcode,
+//                            list<Predicate> reqs = []> {
+//   let mayLoad = 1, UseNamedOperandTable = 1 in {
+//   defm "_A32": I<(outs rc:$dst),
+//                  (ins P2Align:$p2align, offset64_op:$off, I64:$addr),
+//                  (outs), (ins P2Align:$p2align, offset64_op:$off),
+//                  [], !strconcat(Name, "\t$dst, ${off}(${addr})${p2align}"),
+//                  !strconcat(Name, "\t${off}${p2align}"), Opcode, false>,
+//                Requires<reqs>;
+//   }
+// }
+
+// // TODO(martin): add remaining load/store instructions
+// defm LOAD_SEGMENT_I32 : WebAssemblySegmentLoad<I32, "i32.load_segment", 0xfa05, []>;
+
+// multiclass WebAssemblySegmentStore<WebAssemblyRegClass rc, string Name, int Opcode,
+//                             list<Predicate> reqs = []> {
+//   let mayStore = 1, UseNamedOperandTable = 1 in {
+//   defm "_A32" : I<(outs),
+//                   (ins P2Align:$p2align, offset64_op:$off, I64:$addr, rc:$val),
+//                   (outs),
+//                   (ins P2Align:$p2align, offset64_op:$off), [],
+//                   !strconcat(Name, "\t${off}(${addr})${p2align}, $val"),
+//                   !strconcat(Name, "\t${off}${p2align}"), Opcode, false>,
+//                 Requires<reqs>;
+//   }
+// }
+
+// defm STORE_SEGMENT_I32 : WebAssemblySegmentStore<I32, "i32.store_segment", 0xfa04, []>;
+
+// // TODO: define load/store for all types
+// def : Pat<(store i32:$val, (AddrOps64 offset64_op:$offset, I64: $addr)),
+//           (!cast<NI>(STORE_SEGMENT_I32_A32) 0, offset64_op:$offset, I64:$addr, I32:$val)>;
+
+// def : Pat<(i32 (load (AddrOps64 offset64_op:$offset, I64:$addr))),
+//           (!cast<NI>(LOAD_SEGMENT_I32_A32) 0, offset64_op:$offset, I64:$addr)>;
 
 
 multiclass MemoryOps<WebAssemblyRegClass rc, string B> {

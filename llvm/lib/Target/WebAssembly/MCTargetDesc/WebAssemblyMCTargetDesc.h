@@ -206,6 +206,10 @@ inline unsigned GetDefaultP2AlignAny(unsigned Opc) {
   WASM_LOAD_STORE(STORE_LANE_I16x8)
   return 1;
   WASM_LOAD_STORE(LOAD_I32)
+  // case WebAssembly::LOAD_SEGMENT_I32_A32:
+  // case WebAssembly::LOAD_SEGMENT_I32_A32_S:
+  // case WebAssembly::STORE_SEGMENT_I32_A32:
+  // case WebAssembly::STORE_SEGMENT_I32_A32_S:
   WASM_LOAD_STORE(LOAD_F32)
   WASM_LOAD_STORE(STORE_I32)
   WASM_LOAD_STORE(STORE_F32)

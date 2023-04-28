@@ -147,7 +147,7 @@ WebAssemblyRegisterInfo::getFrameRegister(const MachineFunction &MF) const {
       /* !hasFP */ {WebAssembly::SP32, WebAssembly::SP64},
       /*  hasFP */ {WebAssembly::FP32, WebAssembly::FP64}};
   const WebAssemblyFrameLowering *TFI = getFrameLowering(MF);
-  return Regs[TFI->hasFP(MF)][TT.isArch64Bit()];
+  return Regs[TFI->hasFP(MF)][MF.getSubtarget<WebAssemblySubtarget>().hasAddr64()];
 }
 
 const TargetRegisterClass *

@@ -64,8 +64,10 @@ void wasm::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   const char *Linker = Args.MakeArgString(getLinkerPath(Args));
   ArgStringList CmdArgs;
 
+  // TODO(martin): check if we have a +mem-safety attribute
+  bool HasMemSafety = true;
   CmdArgs.push_back("-m");
-  if (ToolChain.getTriple().isArch64Bit())
+  if (HasMemSafety || ToolChain.getTriple().isArch64Bit())
     CmdArgs.push_back("wasm64");
   else
     CmdArgs.push_back("wasm32");
