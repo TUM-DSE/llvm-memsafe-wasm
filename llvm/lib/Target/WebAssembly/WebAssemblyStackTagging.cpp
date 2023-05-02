@@ -248,7 +248,7 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
     for (auto &BB : F) {
       // Check if the current block is dominated by the alloca -- if not, skip
       // this block
-      if (!DT.dominates(Alloca, &BB)) {
+      if (Alloca->getParent() != &BB && !DT.dominates(Alloca, &BB)) {
         continue;
       }
 
