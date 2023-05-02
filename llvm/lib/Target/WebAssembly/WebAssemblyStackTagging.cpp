@@ -51,6 +51,7 @@
 #include "llvm/IR/IntrinsicsWebAssembly.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Metadata.h"
+#include "llvm/IR/Value.h"
 #include "llvm/IR/ValueHandle.h"
 #include "llvm/InitializePasses.h"
 #include "llvm/Pass.h"
@@ -86,17 +87,8 @@ public:
   StringRef getPassName() const override { return "WebAssembly Stack Tagging"; }
 
 private:
-  // Function *F = nullptr;
-  // Function *NewSegmentStackFunc = nullptr;
-  // const DataLayout *DL = nullptr;
-  // // AAResults *AA = nullptr;
-  // const StackSafetyGlobalInfo *SSI = nullptr;
-
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
-    // AU.addRequired<StackSafetyGlobalInfoWrapperPass>();
-    // if (MergeInit)
-    // AU.addRequired<AAResultsWrapperPass>();
   }
 
   bool isAllocKind(Attribute Attr, AllocFnKind Kind) const {
@@ -104,6 +96,18 @@ private:
       return false;
 
     return (Attr.getAllocKind() & Kind) != AllocFnKind::Unknown;
+  }
+
+  Value *alignAllocSize(Value *AllocSize, Instruction *InsertBefore) {
+    auto *Ty = Type::getInt64Ty(AllocSize->getContext());
+    Value *ZextValue = CastInst::CreateZExtOrBitCast(AllocSize, Ty, "", InsertBefore);
+
+    const int32_t Align = 16;
+    auto *Add = BinaryOperator::CreateAdd(
+        ZextValue, ConstantInt::get(Ty, Align - 1), "", InsertBefore);
+    auto *And = BinaryOperator::CreateAnd(
+        Add, ConstantInt::get(Ty, ~(Align - 1)), "", InsertBefore);
+    return And;
   }
 };
 
@@ -113,6 +117,7 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
     return false;
 
   DataLayout DL = F.getParent()->getDataLayout();
+  LLVMContext &Ctx(F.getContext());
 
   SmallVector<AllocaInst *, 8> AllocaInsts;
   SmallVector<std::pair<AllocFnKind, CallInst *>, 8> CallsToAllocFunctions;
@@ -158,17 +163,17 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
 
   auto SafeMallocFn = F.getParent()->getOrInsertFunction(
       "__wasm_memsafety_malloc",
-      FunctionType::get(PointerType::getInt8PtrTy(F.getContext()),
+      FunctionType::get(PointerType::getInt8PtrTy(Ctx),
                         {
-                            Type::getInt32Ty(F.getContext()),
-                            Type::getInt32Ty(F.getContext()),
+                            Type::getInt64Ty(Ctx),
+                            Type::getInt64Ty(Ctx),
                         },
                         false));
   auto SafeFreeFn = F.getParent()->getOrInsertFunction(
       "__wasm_memsafety_free",
-      FunctionType::get(Type::getVoidTy(F.getContext()),
+      FunctionType::get(Type::getVoidTy(Ctx),
                         {
-                            Type::getInt8PtrTy(F.getContext()),
+                            Type::getInt8PtrTy(Ctx),
                         },
                         false));
 
@@ -176,15 +181,18 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
     switch (Kind) {
     case llvm::AllocFnKind::Alloc: {
       // TODO: handle functions other than c malloc
-      auto *NewCall = CallInst::Create(
-          SafeMallocFn, {Call->getArgOperand(0),
-                         ConstantInt::get(Type::getInt32Ty(F.getContext()),
-                                          /* align = */ 16)}, Call->getName(), Call);
+      auto *NewCall =
+          CallInst::Create(SafeMallocFn,
+                           {Call->getArgOperand(0),
+                            ConstantInt::get(Type::getInt32Ty(Ctx),
+                                             /* align = */ 16)},
+                           Call->getName(), Call);
       Call->replaceAllUsesWith(NewCall);
       break;
     }
     case llvm::AllocFnKind::Free: {
-      auto *NewCall = CallInst::Create(SafeFreeFn, {Call->getArgOperand(0)}, Call->getName(), Call);
+      auto *NewCall = CallInst::Create(SafeFreeFn, {Call->getArgOperand(0)},
+                                       Call->getName(), Call);
       Call->replaceAllUsesWith(NewCall);
       break;
     }
@@ -197,16 +205,34 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
   DominatorTree DT(F);
   auto *NewSegmentStackFunc = Intrinsic::getDeclaration(
       F.getParent(), Intrinsic::wasm_segment_stack_new,
-      {Type::getInt32Ty(F.getContext())});
+      {Type::getInt64Ty(Ctx)});
   auto *FreeSegmentStackFunc = Intrinsic::getDeclaration(
       F.getParent(), Intrinsic::wasm_segment_stack_free,
-      {Type::getInt32Ty(F.getContext())});
+      {Type::getInt64Ty(Ctx)});
 
   for (auto *Alloca : AllocaInsts) {
     Alloca->setAlignment(std::max(Alloca->getAlign(), Align(16)));
 
+    DataLayout DL = F.getParent()->getDataLayout();
+    Value *AllocSize;
+    if (Alloca->isArrayAllocation()) {
+      auto ElementSize = DL.getTypeAllocSize(Alloca->getAllocatedType());
+      auto *NumElements = Alloca->getArraySize();
+      NumElements = CastInst::CreateIntegerCast(
+          NumElements, Type::getInt64Ty(Ctx), false, "", Alloca);
+      AllocSize = BinaryOperator::CreateMul(
+          NumElements, ConstantInt::get(NumElements->getType(), ElementSize),
+          "", Alloca);
+    } else {
+      AllocSize =
+          ConstantInt::get(Type::getInt64Ty(Ctx),
+                           DL.getTypeAllocSize(Alloca->getAllocatedType()));
+    }
+    // align the size to 16 bytes
+    AllocSize = this->alignAllocSize(AllocSize, Alloca);
+
     auto *NewStackSegmentInst =
-        CallInst::Create(NewSegmentStackFunc, {Alloca, Alloca->getOperand(0)});
+        CallInst::Create(NewSegmentStackFunc, {Alloca, AllocSize});
     NewStackSegmentInst->insertAfter(Alloca);
 
     Alloca->replaceUsesWithIf(NewStackSegmentInst, [&](Use &U) {
@@ -242,8 +268,6 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
 
       if (!isa<ReturnInst>(Terminator) && !IsTailCall(Terminator))
         continue;
-
-      auto *AllocSize = Alloca->getOperand(0);
 
       auto *FreeSegmentInst = CallInst::Create(
           FreeSegmentStackFunc, {NewStackSegmentInst, Alloca, AllocSize});
