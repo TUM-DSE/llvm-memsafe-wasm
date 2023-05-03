@@ -204,11 +204,9 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
 
   DominatorTree DT(F);
   auto *NewSegmentStackFunc = Intrinsic::getDeclaration(
-      F.getParent(), Intrinsic::wasm_segment_stack_new,
-      {Type::getInt64Ty(Ctx)});
+      F.getParent(), Intrinsic::wasm_segment_stack_new);
   auto *FreeSegmentStackFunc = Intrinsic::getDeclaration(
-      F.getParent(), Intrinsic::wasm_segment_stack_free,
-      {Type::getInt64Ty(Ctx)});
+      F.getParent(), Intrinsic::wasm_segment_stack_free);
 
   for (auto *Alloca : AllocaInsts) {
     Alloca->setAlignment(std::max(Alloca->getAlign(), Align(16)));

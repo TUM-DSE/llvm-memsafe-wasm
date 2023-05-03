@@ -28,13 +28,13 @@ def int_wasm_memory_grow :
 // mem safety instrinsics
 //===----------------------------------------------------------------------===//
 def int_wasm_segment_new :
-  DefaultAttrsIntrinsic<[llvm_ptr_ty], [llvm_anyint_ty], []>;
+  DefaultAttrsIntrinsic<[llvm_ptr_ty], [llvm_i64_ty], []>;
 def int_wasm_segment_free :
-  DefaultAttrsIntrinsic<[], [llvm_ptr_ty, llvm_anyint_ty], []>;
+  DefaultAttrsIntrinsic<[], [llvm_ptr_ty, llvm_i64_ty], []>;
 def int_wasm_segment_stack_new :
-  DefaultAttrsIntrinsic<[llvm_ptr_ty], [llvm_ptr_ty, llvm_anyint_ty], []>;
+  DefaultAttrsIntrinsic<[llvm_ptr_ty], [llvm_ptr_ty, llvm_i64_ty], []>;
 def int_wasm_segment_stack_free :
-  DefaultAttrsIntrinsic<[], [llvm_ptr_ty, llvm_ptr_ty, llvm_anyint_ty], []>;
+  DefaultAttrsIntrinsic<[], [llvm_ptr_ty, llvm_ptr_ty, llvm_i64_ty], []>;
 
 //===----------------------------------------------------------------------===//
 // ref.null intrinsics
