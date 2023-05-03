@@ -43,6 +43,7 @@
 #include "llvm/IR/GetElementPtrTypeIterator.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/InstIterator.h"
+#include "llvm/IR/InstVisitor.h"
 #include "llvm/IR/InstrTypes.h"
 #include "llvm/IR/Instruction.h"
 #include "llvm/IR/Instructions.h"
@@ -64,6 +65,7 @@
 #include "llvm/Transforms/Utils/MemoryTaggingSupport.h"
 #include <algorithm>
 #include <cassert>
+#include <list>
 #include <memory>
 #include <utility>
 
@@ -72,6 +74,90 @@ using namespace llvm;
 #define DEBUG_TYPE "wasm-stack-tagging"
 
 namespace {
+
+class SafeStackSlotAnalysis : public InstVisitor<SafeStackSlotAnalysis, bool> {
+private:
+  Value *U = nullptr;
+  std::list<std::pair<Instruction *, Instruction *>> WorkList;
+
+  void addUsersToWorklist(Instruction &I) {
+    for (auto *User : I.users()) {
+      if (auto *U = dyn_cast<Instruction>(User)) {
+        WorkList.emplace_back(std::pair(&I, U));
+      }
+    }
+  }
+
+public:
+  SafeStackSlotAnalysis() {}
+
+  bool check(AllocaInst *I) {
+    this->addUsersToWorklist(*I);
+    std::set<Instruction *> Visited;
+    Visited.insert(I);
+
+    while (!WorkList.empty()) {
+      auto [Val, User] = WorkList.back();
+      WorkList.pop_back();
+
+      if (!Visited.insert(User).second) {
+        // we've already checked this value and it is safe
+        continue;
+      }
+
+      this->U = Val;
+      // if a single user is unsafe, return immediately
+      if (!this->visit(*User)) {
+        return false;
+      }
+    }
+
+    // we've visited all users (recursive), and should be fine
+    return true;
+  }
+
+  bool visitCastInst(CastInst &I) {
+    // if we are bitcasting to an int, this is not safe
+    if (!I.getDestTy()->isPointerTy() || !I.getSrcTy()->isPointerTy()) {
+      return false;
+    }
+
+    this->addUsersToWorklist(I);
+    return true;
+  }
+
+  bool visitSelectInst(SelectInst &I) {
+    // Only safe if all users are safe
+    this->addUsersToWorklist(I);
+    return true;
+  }
+
+  bool visitIntrinsicInst(IntrinsicInst &I) {
+    // assume only intrinsics returning void are safe (e.g. llvm.lifetime.start)
+    return I.getType()->isVoidTy();
+  }
+
+  // always unsafe
+  bool visitMemIntrinsic(MemIntrinsic &I) { return false; }
+  bool visitCallBase(CallBase &I) { return false; }
+  bool visitTerminator(Instruction &I) { return false; }
+  bool visitGetElementPtrInst(GetElementPtrInst &I) { return false; }
+
+  // always safe
+  bool visitAtomicCmpXchgInst(AtomicCmpXchgInst &I) { return true; }
+  bool visitAtomicRMWInst(AtomicRMWInst &I) { return true; }
+  bool visitFenceInst(FenceInst &I) { return true; }
+  bool visitPHINode(PHINode &I) { return true; }
+  bool visitLoadInst(LoadInst &I) { return true; }
+  bool visitStoreInst(StoreInst &I) { return true; }
+  bool visitDbgInfoIntrinsic(DbgInfoIntrinsic &I) { return true; }
+
+  bool visitInstruction(Instruction &I) {
+    I.dump();
+    // TODO: remove this and resafe with default return false
+    llvm_unreachable("All cases should be handled above");
+  }
+};
 
 class WebAssemblyStackTagging : public FunctionPass {
 
@@ -100,7 +186,8 @@ private:
 
   Value *alignAllocSize(Value *AllocSize, Instruction *InsertBefore) {
     auto *Ty = Type::getInt64Ty(AllocSize->getContext());
-    Value *ZextValue = CastInst::CreateZExtOrBitCast(AllocSize, Ty, "", InsertBefore);
+    Value *ZextValue =
+        CastInst::CreateZExtOrBitCast(AllocSize, Ty, "", InsertBefore);
 
     const int32_t Align = 16;
     auto *Add = BinaryOperator::CreateAdd(
@@ -127,10 +214,11 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
       if (auto *Alloca = dyn_cast<AllocaInst>(&I)) {
         LLVM_DEBUG(dbgs() << "Checking alloca: " << *Alloca << "\n");
 
-        // TODO: check which allocas we actually need to protect and which we
-        // don't We cannot use Alloca->isArrayAllocation(), as it returns true
-        // for [i8 x 16] and some more cases
-        AllocaInsts.emplace_back(Alloca);
+        SafeStackSlotAnalysis Analysis;
+        if (!Analysis.check(Alloca)) {
+          LLVM_DEBUG(dbgs() << "Alloca potentially unsafe, instrumenting.\n");
+          AllocaInsts.emplace_back(Alloca);
+        }
       }
       if (auto *Call = dyn_cast<CallInst>(&I)) {
         auto *CalledFunction = Call->getCalledFunction();
@@ -170,23 +258,21 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
                         },
                         false));
   auto SafeFreeFn = F.getParent()->getOrInsertFunction(
-      "__wasm_memsafety_free",
-      FunctionType::get(Type::getVoidTy(Ctx),
-                        {
-                            Type::getInt8PtrTy(Ctx),
-                        },
-                        false));
+      "__wasm_memsafety_free", FunctionType::get(Type::getVoidTy(Ctx),
+                                                 {
+                                                     Type::getInt8PtrTy(Ctx),
+                                                 },
+                                                 false));
 
   for (auto [Kind, Call] : CallsToAllocFunctions) {
     switch (Kind) {
     case llvm::AllocFnKind::Alloc: {
       // TODO: handle functions other than c malloc
-      auto *NewCall =
-          CallInst::Create(SafeMallocFn,
-                           {Call->getArgOperand(0),
-                            ConstantInt::get(Type::getInt32Ty(Ctx),
-                                             /* align = */ 16)},
-                           Call->getName(), Call);
+      auto *NewCall = CallInst::Create(
+          SafeMallocFn,
+          {Call->getArgOperand(0), ConstantInt::get(Type::getInt32Ty(Ctx),
+                                                    /* align = */ 16)},
+          Call->getName(), Call);
       Call->replaceAllUsesWith(NewCall);
       break;
     }
