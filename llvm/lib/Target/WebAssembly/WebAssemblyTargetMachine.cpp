@@ -463,7 +463,7 @@ void WebAssemblyPassConfig::addIRPasses() {
   addPass(createIndirectBrExpandPass());
 
   addPass(
-      createWebAssemblyStackTaggingPass(TM->getOptLevel() == CodeGenOpt::None));
+      createWebAssemblyMemorySafetyPass(TM->getOptLevel() == CodeGenOpt::None));
 
   TargetPassConfig::addIRPasses();
 }

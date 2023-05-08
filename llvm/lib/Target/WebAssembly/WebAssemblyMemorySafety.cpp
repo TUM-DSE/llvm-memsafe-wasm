@@ -1,4 +1,4 @@
-//===- WebAssemblyStackTagging.cpp - Stack tagging in IR --===//
+//===- WebAssemblyMemorySafety.cpp - Memory Safety for WASM --===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -159,18 +159,18 @@ public:
   }
 };
 
-class WebAssemblyStackTagging : public FunctionPass {
+class WebAssemblyMemorySafety : public FunctionPass {
 
 public:
   static char ID;
 
-  WebAssemblyStackTagging() : FunctionPass(ID) {
-    initializeWebAssemblyStackTaggingPass(*PassRegistry::getPassRegistry());
+  WebAssemblyMemorySafety() : FunctionPass(ID) {
+    initializeWebAssemblyMemorySafetyPass(*PassRegistry::getPassRegistry());
   }
 
   bool runOnFunction(Function &F) override;
 
-  StringRef getPassName() const override { return "WebAssembly Stack Tagging"; }
+  StringRef getPassName() const override { return "WebAssembly Memory Safety"; }
 
 private:
   void getAnalysisUsage(AnalysisUsage &AU) const override {
@@ -198,7 +198,7 @@ private:
   }
 };
 
-bool WebAssemblyStackTagging::runOnFunction(Function &F) {
+bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
   if (!F.hasFnAttribute(Attribute::SanitizeWasmMemSafety) ||
       F.getName().starts_with("__wasm_memsafety_"))
     return false;
@@ -364,17 +364,15 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
 
 } // namespace
 
-char WebAssemblyStackTagging::ID = 0;
+char WebAssemblyMemorySafety::ID = 0;
 
-INITIALIZE_PASS_BEGIN(WebAssemblyStackTagging, DEBUG_TYPE,
-                      "WebAssembly Stack Tagging", false, false)
-// INITIALIZE_PASS_DEPENDENCY(AAResultsWrapperPass)
-// INITIALIZE_PASS_DEPENDENCY(StackSafetyGlobalInfoWrapperPass)
-INITIALIZE_PASS_END(WebAssemblyStackTagging, DEBUG_TYPE,
-                    "WebAssembly Stack Tagging", false, false)
+INITIALIZE_PASS_BEGIN(WebAssemblyMemorySafety, DEBUG_TYPE,
+                      "WebAssembly Memory Safety", false, false)
+INITIALIZE_PASS_END(WebAssemblyMemorySafety, DEBUG_TYPE,
+                    "WebAssembly Memory Safety", false, false)
 
-FunctionPass *llvm::createWebAssemblyStackTaggingPass(bool IsOptNone) {
-  return new WebAssemblyStackTagging();
+FunctionPass *llvm::createWebAssemblyMemorySafetyPass(bool IsOptNone) {
+  return new WebAssemblyMemorySafety();
 }
 
 #undef DEBUG_TYPE
