@@ -270,7 +270,7 @@ bool WebAssemblyStackTagging::runOnFunction(Function &F) {
       // TODO: handle functions other than c malloc
       auto *NewCall = CallInst::Create(
           SafeMallocFn,
-          {Call->getArgOperand(0), ConstantInt::get(Type::getInt32Ty(Ctx),
+          {Call->getArgOperand(0), ConstantInt::get(Type::getInt64Ty(Ctx),
                                                     /* align = */ 16)},
           Call->getName(), Call);
       Call->replaceAllUsesWith(NewCall);
