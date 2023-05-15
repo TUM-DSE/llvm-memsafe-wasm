@@ -32,15 +32,15 @@ void *__wasm_memsafety_malloc(size_t align, size_t size) {
     align = align > 16 ? align : 16;
     // round up size to the next multiple of align
     // TODO: check if this works for non powers of two
-    size_t aligned_size = (size + (align - 1)) & (~align);
+    size_t aligned_size = (size + (align - 1)) & (~(align - 1));
     void *mem = aligned_alloc(align, aligned_size);
     if (mem) {
-        __builtin_wasm_segment_new_stack(mem, size);
+        fprintf(stderr, "Tagging memory %p, size %zu\n", mem, aligned_size);
         Node *newHead = (Node *) malloc(sizeof(Node));
         newHead->next = head;
         newHead->ptr = mem;
-        newHead->size = size;
-        fprintf(stderr, "Tagging memory %p, size %zu\n", mem, size);
+        newHead->size = aligned_size;
+        mem = __builtin_wasm_segment_new_stack(mem, aligned_size);
     }
 
     return mem;

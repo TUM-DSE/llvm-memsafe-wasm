@@ -268,11 +268,11 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
     switch (Kind) {
     case llvm::AllocFnKind::Alloc: {
       // TODO: handle functions other than c malloc
-      auto *NewCall = CallInst::Create(
-          SafeMallocFn,
-          {Call->getArgOperand(0), ConstantInt::get(Type::getInt64Ty(Ctx),
-                                                    /* align = */ 16)},
-          Call->getName(), Call);
+      auto *NewCall = CallInst::Create(SafeMallocFn,
+                                       {ConstantInt::get(Type::getInt64Ty(Ctx),
+                                                         /* align = */ 16),
+                                        Call->getArgOperand(0)},
+                                       Call->getName(), Call);
       Call->replaceAllUsesWith(NewCall);
       break;
     }
