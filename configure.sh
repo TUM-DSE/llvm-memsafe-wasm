@@ -15,6 +15,7 @@ cmake -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lldb;lld" \
       -DLLVM_USE_LINKER="mold" \
       -DCMAKE_C_COMPILER="clang" \
       -DCMAKE_CXX_COMPILER="clang++" \
+      -DLLVM_PARALLEL_LINK_JOBS=1 \
       -G "Ninja" \
       ../llvm
 
