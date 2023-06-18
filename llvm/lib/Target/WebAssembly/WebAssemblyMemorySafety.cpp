@@ -359,6 +359,37 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
     }
   }
 
+  auto *PointerSignFunc = Intrinsic::getDeclaration(
+      F.getParent(), Intrinsic::wasm_pointer_sign);
+  auto *PointerAuthFunc = Intrinsic::getDeclaration(
+      F.getParent(), Intrinsic::wasm_pointer_auth);
+
+  // Look for instructions that load/store a pointer, and add
+  // pointer signing and authenticating instructions
+  for (BasicBlock &BB : F) {
+    for (Instruction &I : BB) {
+      if (StoreInst *SI = dyn_cast<StoreInst>(&I)) {
+        // Store(value, ptr): $value is stored at data address pointed to by $ptr
+        // Check if value to be stored in memory is a pointer
+        Value *ValueToStore = SI->getValueOperand();
+        if (ValueToStore->getType()->isPointerTy()) {
+          // TODO: here I'm signing the value_ptr, but below I'm authenticating the dst_ptr
+          auto *PointerSignInst = CallInst::Create(PointerSignFunc, {ValueToStore});
+          PointerSignInst->insertBefore(SI);
+        }
+      } else
+      if (LoadInst *LI = dyn_cast<LoadInst>(&I)) {
+        // Load(ptr): The data value located at the memory address pointed to by $ptr is returned
+        // Check if value to be loaded from memory is a pointer
+        if (LI->getType()->isPointerTy()) {
+          Value *Ptr = SI->getPointerOperand();
+          auto *PointerAuthInst = CallInst::Create(PointerAuthFunc, {Ptr});
+          PointerAuthInst->insertBefore(LI);
+        }
+      }
+    }
+  }
+
   return true;
 }
 

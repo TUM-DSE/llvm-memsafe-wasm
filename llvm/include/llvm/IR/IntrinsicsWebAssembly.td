@@ -35,6 +35,10 @@ def int_wasm_segment_stack_new :
   DefaultAttrsIntrinsic<[llvm_ptr_ty], [llvm_ptr_ty, llvm_i64_ty], []>;
 def int_wasm_segment_stack_free :
   DefaultAttrsIntrinsic<[], [llvm_ptr_ty, llvm_ptr_ty, llvm_i64_ty], []>;
+def int_wasm_pointer_sign :
+  DefaultAttrsIntrinsic<[llvm_ptr_ty], [llvm_ptr_ty], []>;
+def int_wasm_pointer_auth :
+  DefaultAttrsIntrinsic<[llvm_ptr_ty], [llvm_ptr_ty], []>;
 
 //===----------------------------------------------------------------------===//
 // ref.null intrinsics
