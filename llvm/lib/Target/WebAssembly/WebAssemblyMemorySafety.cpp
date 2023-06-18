@@ -382,7 +382,7 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
         // Load(ptr): The data value located at the memory address pointed to by $ptr is returned
         // Check if value to be loaded from memory is a pointer
         if (LI->getType()->isPointerTy()) {
-          Value *Ptr = SI->getPointerOperand();
+          Value *Ptr = LI->getPointerOperand();
           auto *PointerAuthInst = CallInst::Create(PointerAuthFunc, {Ptr});
           PointerAuthInst->insertBefore(LI);
         }
