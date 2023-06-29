@@ -462,8 +462,10 @@ void WebAssemblyPassConfig::addIRPasses() {
   // Expand indirectbr instructions to switches.
   addPass(createIndirectBrExpandPass());
 
-  addPass(
-      createWebAssemblyMemorySafetyPass(TM->getOptLevel() == CodeGenOpt::None));
+  // addPass(
+  //     createWebAssemblyMemorySafetyPass(TM->getOptLevel() == CodeGenOpt::None));
+
+  addPass(createWebAssemblyPointerAuthenticationPass());
 
   TargetPassConfig::addIRPasses();
 }

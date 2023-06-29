@@ -359,60 +359,6 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
     }
   }
 
-  auto *PointerSignFunc = Intrinsic::getDeclaration(
-      F.getParent(), Intrinsic::wasm_pointer_sign);
-  auto *PointerAuthFunc = Intrinsic::getDeclaration(
-      F.getParent(), Intrinsic::wasm_pointer_auth);
-
-  // TODO: why is this a smallvec of size 8, why size 8, why not regular vector
-  SmallVector<StoreInst*, 8> StoreInsts;
-  SmallVector<LoadInst*, 8> LoadInsts;
-
-  // Look for instructions that load/store a pointer
-  for (BasicBlock &BB : F) {
-    for (Instruction &I : BB) {
-      if (StoreInst *SI = dyn_cast<StoreInst>(&I)) {
-        // Store(value, ptr): $value is stored at data address pointed to by $ptr
-        // Check if value to be stored in memory is a pointer
-        if (SI->getValueOperand()->getType()->isPointerTy()) {
-          // We shouldn't mutate the instructions we are iterating over
-          StoreInsts.emplace_back(SI);
-        }
-      } else
-      if (LoadInst *LI = dyn_cast<LoadInst>(&I)) {
-        // Load(ptr): The data value located at the memory address pointed to by $ptr is returned
-        // Check if value to be loaded from memory is a pointer
-        if (LI->getType()->isPointerTy()) {
-          // We shouldn't mutate the instructions we are iterating over
-          LoadInsts.emplace_back(LI);
-        }
-      }
-    }
-  }
-
-  // Add pointer signing inst before pointer store inst
-  for (auto SI : StoreInsts) {
-    // Sign the value (which is a pointer) that will be stored
-    Value *PointerValueToStore = SI->getValueOperand();
-    auto *PointerSignInst = CallInst::Create(PointerSignFunc, {PointerValueToStore});
-    PointerSignInst->insertBefore(SI);
-
-    // Replace the value operand in the store inst with the new signed value
-    SI->setOperand(0, PointerSignInst);
-  }
-
-  // Add pointer authentication inst after pointer load inst
-  for (auto LI : LoadInsts) {
-    // Load the pointer value, and then authenticate it
-    auto *PointerAuthInst = CallInst::Create(PointerAuthFunc, {LI});
-    PointerAuthInst->insertAfter(LI);
-
-    // All further uses of the load's return value must use our authenticated pointer instead now
-    LI->replaceUsesWithIf(PointerAuthInst, [&](Use &U) {
-      return U.getUser() != PointerAuthInst;
-    });
-  }
-
   return true;
 }
 

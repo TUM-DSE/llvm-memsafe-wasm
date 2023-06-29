@@ -39,3 +39,13 @@ Wasmtime can be cross-compiled for aarch64 with the provided `Dockerfile` in thi
 ./wasmtime compile demo-scanf.wasm --cranelift-enable use_mte --wasm-features=memory64,mem-safety
 ./wasmtime run --allow-precompiled --wasm-features=memory64,mem-safety -- demo-scanf.cwasm
 ```
+
+## Checking generated code
+
+You can test what code is generated with the following commands, even if you are on a machine that is not aarch64 or doesn't support mte.
+
+```shell
+./wasmtime compile --target aarch64-unknown-linux-gnu --cranelift-enable use_mte --wasm-features=memory64,mem-safety demo-<name>.c
+llvm-objdump -D demo-<name>.cwasm > demo-<name>.s
+```
+
