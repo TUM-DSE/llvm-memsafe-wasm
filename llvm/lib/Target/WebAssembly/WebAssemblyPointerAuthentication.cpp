@@ -18,7 +18,8 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Statistic.h"
 #include "llvm/Analysis/AliasAnalysis.h"
-#include "llvm/Analysis/BasicAliasAnalysis.h"
+#include "llvm/Analysis/AliasSetTracker.h"
+// #include "llvm/Analysis/BasicAliasAnalysis.h"
 #include "llvm/Analysis/CFG.h"
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Analysis/PostDominators.h"
@@ -94,41 +95,83 @@ public:
   StringRef getPassName() const override { return "WebAssembly Pointer Authentication"; }
 
 private:
-  // TODO: do i need this
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<AAResultsWrapperPass>();
     AU.setPreservesCFG();
   }
 };
 
+std::string getAliasResultString(AliasResult result) {
+    switch (result) {
+        case AliasResult::NoAlias:
+            return "NoAlias";
+        case AliasResult::MayAlias:
+            return "MayAlias";
+        case AliasResult::PartialAlias:
+            return "PartialAlias";
+        case AliasResult::MustAlias:
+            return "MustAlias";
+    }
+}
 
-// TODO: AliasAnalysis does not account for loops
+// TODO: AliasAnalysis does not account for loops apparently => test
 void findAllAliasesOfValue(Value &V, SmallVector<Value *, 8> &Aliases, AliasAnalysis &AA, Function &F) {
-  std::cout << "Value \"" << V.getName().str() << "\" is aliased by:" << std::endl;
+  // The pointer itself counts as one of the aliases
+  Aliases.emplace_back(&V);
+
+  std::cout << "  Value \"" << V.getName().str() << "\" is aliased by:" << std::endl;
   for (BasicBlock &BB : F) {
-    for (Instruction &I : BB) {
-      // TODO: is this cast to value necessary?
-      if (auto OtherValue = dyn_cast<Value>(&I)) {
+    for (Value &OtherValue : BB) {
+      // Only iterate on all other values
+      if (&V == &OtherValue) {
+        continue;
+      }
+
+      // if (auto OtherValue = dyn_cast<Value>(&I)) {
         // TODO: !isNoAlias is more conservative than isMustAlias, because we also ignore cases of isMaybeAlias; either way non-deterministic?
-        if (!AA.isNoAlias(&V, OtherValue)) {
-          std::cout << "  Other value \"" << OtherValue->getName().str() << "\"" << std::endl;
-          Aliases.emplace_back(OtherValue);
-        }
+        // if (!AA.isNoAlias(&V, OtherValue)) {
+        // // if (AA.isMustAlias(&V, OtherValue)) {
+        //   std::cout << "  Other value \"" << OtherValue->getName().str() << "\"" << std::endl;
+        //   Aliases.emplace_back(OtherValue);
+        // }
+      // }
+
+      AliasResult aliasResult = AA.alias(&V, &OtherValue);
+      // if (!AA.isNoAlias()) {
+      if (aliasResult != AliasResult::NoAlias) {
+        std::cout << "    Other value \"" << OtherValue.getName().str() << "\" is a: " << getAliasResultString(aliasResult) << std::endl;
+
+        Aliases.emplace_back(&OtherValue);
       }
     }
   }
+
+  // // Perform alias analysis on the instruction or value
+  // AliasSetTracker AST(AA);
+  // AST.add(*InstToAnalyze);
+  // AST.complete();
+
+  // // Iterate over alias sets and print the aliasing values
+  // for (llvm::AliasSet& AS : AST) {
+  //   for (llvm::AliasSet::iterator I = AS.begin(), E = AS.end(); I != E; ++I) {
+  //     llvm::Value* AliasedValue = *I;
+  //     // Do something with the aliased value
+  //   }
+  // }
+
 }
 
 // Find all function calls that use the specified value as an argument.
+// TODO:
 // This function also recursively finds all referenced/pointed to uses
 // of the value.
 void findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<CallInst*, 8> &FunctionCalls) {
-  std::cout << "Value \"" << V.getName().str() << "\" is used in functions:" << std::endl;
+  std::cout << "  Value \"" << V.getName().str() << "\" is used in functions:" << std::endl;
   for (User *U : V.users()) {
     if (CallInst *CI = dyn_cast<CallInst>(U)) {
       for (Value *Arg : CI->args()) {
         if (Arg == &V) {
-          std::cout << "  Function \"" << CI->getCalledFunction()->getName().str() << "\"" << std::endl;
+          std::cout << "    Function \"" << CI->getCalledFunction()->getName().str() << "\"" << std::endl;
           FunctionCalls.emplace_back(CI);
           break;
         }
@@ -137,24 +180,41 @@ void findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<CallInst
   }
 }
 
-// Find all function calls that use the specified value as an argument.
-// This function also recursively finds all referenced/pointed to uses
-// of the value.
-void findAllFunctionsWhereValueIsPassedAsArgument2(Value &V, SmallVector<CallInst*, 8> &FunctionCalls, Function &F) {
-  std::cout << "Value \"" << V.getName().str() << "\" is used in functions:" << std::endl;
-  for (BasicBlock &BB : F) {
-    for (Instruction &I : BB) {
-      if (auto CI = dyn_cast<CallInst>(&I)) {
-        for (Value *Arg : CI->args()) {
-          if (Arg == &V) {
-            std::cout << "  Function \"" << CI->getCalledFunction()->getName().str() << "\"" << std::endl;
-            FunctionCalls.emplace_back(CI);
-            break;
-          }
-        }
-      }
+// A pointer has other uses if it is used as a parameter by other functions in
+// the same module.
+bool pointerHasOtherUses(Value &Pointer, Function &F, AliasAnalysis &AA) {
+  // TODO: !functionsOutsideModuleUsingPointer.empty() vs assert that all functionsUsingPointer are from this module
+  SmallVector<CallInst*, 8> functionsUsingPointer;
+  findAllFunctionsWhereValueIsPassedAsArgument(Pointer, functionsUsingPointer);
+
+  bool pointerHasNoOtherUses = functionsUsingPointer.empty();
+  return !pointerHasNoOtherUses;
+}
+
+// TODO: consider rephrasing to "is not used elsewhere"
+
+// Pointer Authentication Rules:
+//
+// A pointer (value) is suitable for pointer authentication, if it has no
+// other uses.
+// A value has other uses if it is used as a parameter by other functions in
+// the same module.
+// A pointer can never be suitable if there exist aliases to it.
+//
+// Rule relaxations:
+// 1. We consider a pointer with aliases suitable, if all of its aliases
+//    are also suitable.
+bool pointerAuthenticationIsSuitable(Value &Pointer, Function &F, AliasAnalysis &AA) {
+  SmallVector<Value*, 8> Aliases;
+  findAllAliasesOfValue(Pointer, Aliases, AA, F);
+
+  for (auto Alias : Aliases) {
+    if (pointerHasOtherUses(*Alias, F, AA)) {
+      return false;
     }
   }
+
+  return true;
 }
 
 bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
@@ -162,11 +222,6 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
       F.getParent(), Intrinsic::wasm_pointer_sign);
   auto *PointerAuthFunc = Intrinsic::getDeclaration(
       F.getParent(), Intrinsic::wasm_pointer_auth);
-
-  // TODO: remove
-  if (F.getName() != "__main_argc_argv") {
-    return true;
-  }
 
   SmallVector<StoreInst*, 8> StorePointerInsts;
   SmallVector<LoadInst*, 8> LoadPointerInsts;
@@ -195,20 +250,12 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
 
   // Add pointer signing inst before pointer store inst
   for (auto SI : StorePointerInsts) {
-  // for (auto SI : MatchedStoreInsts) {
-    // std::cout << "Found a valid pointer store\n";
-
     // TODO: consider maybe casting this to some sort of pointer type, just so we always know this value is indeed a pointer
-    // Sign the value (which is a pointer) that will be stored
     Value *PointerValueToStore = SI->getValueOperand();
 
-
-    SmallVector<CallInst*, 8> functionCalls;
-    findAllFunctionsWhereValueIsPassedAsArgument(*PointerValueToStore, functionCalls);
-    // findAllFunctionsWhereValueIsPassedAsArgument2(*PointerValueToStore, functionCalls, F);
-
-    SmallVector<Value*, 8> aliases;
-    findAllAliasesOfValue(*PointerValueToStore, aliases, AA, F);
+    if (!pointerAuthenticationIsSuitable(*PointerValueToStore, F, AA)) {
+      continue;
+    }
 
     auto *PointerSignInst = CallInst::Create(PointerSignFunc, {PointerValueToStore});
     PointerSignInst->insertBefore(SI);
@@ -219,10 +266,11 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
 
   // Add pointer authentication inst after pointer load inst
   for (auto LI : LoadPointerInsts) {
-  // for (auto LI : MatchedLoadInsts) {
-    // std::cout << "Found a valid pointer load\n";
 
-    // Load the pointer value, and then authenticate it
+    if (!pointerAuthenticationIsSuitable(*LI, F, AA)) {
+      continue;
+    }
+
     auto *PointerAuthInst = CallInst::Create(PointerAuthFunc, {LI});
     PointerAuthInst->insertAfter(LI);
 
@@ -232,12 +280,14 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
     });
   }
 
-  // F.dump();
+  F.dump();
 
   return true;
 }
 
 bool WebAssemblyPointerAuthentication::runOnFunction(Function &F) {
+  std::cout << "Function: " << F.getName().str() << std::endl;
+
   AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
   return authenticateStoredAndLoadedPointers(F, AA);
 }
