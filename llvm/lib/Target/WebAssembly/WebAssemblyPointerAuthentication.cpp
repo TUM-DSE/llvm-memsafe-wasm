@@ -82,19 +82,21 @@ using namespace llvm;
 namespace {
 
 class WebAssemblyPointerAuthentication : public FunctionPass {
+// class WebAssemblyPointerAuthentication : public ModulePass {
 
 public:
   static char ID;
 
+  // WebAssemblyPointerAuthentication() : ModulePass(ID) {
   WebAssemblyPointerAuthentication() : FunctionPass(ID) {
     initializeWebAssemblyPointerAuthenticationPass(*PassRegistry::getPassRegistry());
   }
 
+  // bool runOnModule(Module &M) override;
   bool runOnFunction(Function &F) override;
 
   StringRef getPassName() const override { return "WebAssembly Pointer Authentication"; }
 
-private:
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<AAResultsWrapperPass>();
     AU.setPreservesCFG();
@@ -116,7 +118,7 @@ std::string getAliasResultString(AliasResult result) {
 
 // TODO: AliasAnalysis does not account for loops apparently => test
 void findAllAliasesOfValue(Value &V, SmallVector<Value *, 8> &Aliases, AliasAnalysis &AA, Function &F) {
-  // The pointer itself counts as one of the aliases
+  // The pointer itself counts as one of its own aliases
   Aliases.emplace_back(&V);
 
   std::cout << "  Value \"" << V.getName().str() << "\" is aliased by:" << std::endl;
@@ -161,18 +163,50 @@ void findAllAliasesOfValue(Value &V, SmallVector<Value *, 8> &Aliases, AliasAnal
 
 }
 
+// We define a function as external if it is declared, but not defined, in
+// the current module.
+bool isExternalFunction(Function &F, Function &BaseFunction) {
+  std::cout << "==== Checking whether function \"" << F.getName().str() << "\" is an external function." << std::endl;
+
+  if (F.isDeclaration() && !F.isIntrinsic()) {
+    std::cout << "==== From the base function: " << BaseFunction.getName().str() << " Function \"" << F.getName().str() << "\" is an external function." << std::endl;
+    // Check if the function has any external linkage
+    // if (F.hasExternalLinkage() || F.hasAvailableExternallyLinkage()) {
+    if (F.hasExternalLinkage()) {
+      std::cout << "==== with external linkage" << std::endl;
+      return true;
+    }
+
+
+  }
+  std::cout << "==== From the base function: " << BaseFunction.getName().str() << " Function \"" << F.getName().str() << "\" is NOT an external function." << std::endl;
+  return false;
+}
+
 // Find all function calls that use the specified value as an argument.
-// TODO:
-// This function also recursively finds all referenced/pointed to uses
-// of the value.
-void findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<CallInst*, 8> &FunctionCalls) {
+// Once we found a function, we also have to recursively find all of
+// the functions that use that function('s return value).
+void findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<Function*, 8> &FunctionCalls) {
   std::cout << "  Value \"" << V.getName().str() << "\" is used in functions:" << std::endl;
   for (User *U : V.users()) {
+    // TODO: we can't only consider function users, we also have to consider e.g. normal loads and stores, which are not function calls
     if (CallInst *CI = dyn_cast<CallInst>(U)) {
       for (Value *Arg : CI->args()) {
         if (Arg == &V) {
           std::cout << "    Function \"" << CI->getCalledFunction()->getName().str() << "\"" << std::endl;
-          FunctionCalls.emplace_back(CI);
+
+          FunctionCalls.emplace_back(CI->getCalledFunction());
+
+          // If our value is being passed as an argument to another function, we need to check that, in that other function, the pointer has no other uses as well.
+          // if (pointerAuthenticationIsSuitable(&V, CI->getCalledFunction(), AA)) {
+          //   return
+          // }
+
+          // TODO: only do this if the original value, that was passed to another function, is again returned from this function
+          // TODO: would a simple "if (CI == &V)" work?
+          // Recursively checks if any other functions use the function's return value
+          findAllFunctionsWhereValueIsPassedAsArgument(*CI, FunctionCalls);
+
           break;
         }
       }
@@ -180,15 +214,25 @@ void findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<CallInst
   }
 }
 
-// A pointer has other uses if it is used as a parameter by other functions in
-// the same module.
+// A pointer has other uses if it is used as a parameter by external functions.
 bool pointerHasOtherUses(Value &Pointer, Function &F, AliasAnalysis &AA) {
-  // TODO: !functionsOutsideModuleUsingPointer.empty() vs assert that all functionsUsingPointer are from this module
-  SmallVector<CallInst*, 8> functionsUsingPointer;
+  SmallVector<Function*, 8> functionsUsingPointer;
   findAllFunctionsWhereValueIsPassedAsArgument(Pointer, functionsUsingPointer);
 
-  bool pointerHasNoOtherUses = functionsUsingPointer.empty();
-  return !pointerHasNoOtherUses;
+  // TODO: !functionsOutsideModuleUsingPointer.empty() vs assert that all functionsUsingPointer are from this module
+  for (auto function: functionsUsingPointer) {
+    // if (isExternalFunction(*function)) {
+    if (isExternalFunction(*function, F)) {
+      return true;
+    }
+    // TODO: we need a module pass with alias analysis having been performed on the entire module,
+    // since now we are basically analysing another function, and the alias analysis is not guaranteed to have run over this until now.
+
+    // If our value is being passed as an argument to another function, we need to check that, in that other function, the pointer has no other uses as well.
+    // if (pointerAuthenticationIsSuitable())
+  }
+
+  return false;
 }
 
 // TODO: consider rephrasing to "is not used elsewhere"
@@ -208,6 +252,7 @@ bool pointerAuthenticationIsSuitable(Value &Pointer, Function &F, AliasAnalysis 
   SmallVector<Value*, 8> Aliases;
   findAllAliasesOfValue(Pointer, Aliases, AA, F);
 
+  // If any of the aliases are disallowed, then all of the aliases should be disallowed
   for (auto Alias : Aliases) {
     if (pointerHasOtherUses(*Alias, F, AA)) {
       return false;
@@ -217,6 +262,7 @@ bool pointerAuthenticationIsSuitable(Value &Pointer, Function &F, AliasAnalysis 
   return true;
 }
 
+// TODO: what does the return bool mean?
 bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
   auto *PointerSignFunc = Intrinsic::getDeclaration(
       F.getParent(), Intrinsic::wasm_pointer_sign);
@@ -232,17 +278,22 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
       if (StoreInst *SI = dyn_cast<StoreInst>(&I)) {
         // Store(value, ptr): $value is stored at data address pointed to by $ptr
         // Check if value to be stored in memory is a pointer
-        if (SI->getValueOperand()->getType()->isPointerTy()) {
-          // We shouldn't mutate the instructions we are iterating over
-          StorePointerInsts.emplace_back(SI);
+        Value *PointerValueToStore = SI->getValueOperand();
+        if (PointerValueToStore->getType()->isPointerTy()) {
+          if (pointerAuthenticationIsSuitable(*PointerValueToStore, F, AA)) {
+            // We shouldn't mutate the instructions we are iterating over
+            StorePointerInsts.emplace_back(SI);
+          }
         }
       } else
       if (LoadInst *LI = dyn_cast<LoadInst>(&I)) {
         // Load(ptr): The data value located at the memory address pointed to by $ptr is returned
         // Check if value to be loaded from memory is a pointer
         if (LI->getType()->isPointerTy()) {
-          // We shouldn't mutate the instructions we are iterating over
-          LoadPointerInsts.emplace_back(LI);
+          if (pointerAuthenticationIsSuitable(*LI, F, AA)) {
+            // We shouldn't mutate the instructions we are iterating over
+            LoadPointerInsts.emplace_back(LI);
+          }
         }
       }
     }
@@ -253,10 +304,6 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
     // TODO: consider maybe casting this to some sort of pointer type, just so we always know this value is indeed a pointer
     Value *PointerValueToStore = SI->getValueOperand();
 
-    if (!pointerAuthenticationIsSuitable(*PointerValueToStore, F, AA)) {
-      continue;
-    }
-
     auto *PointerSignInst = CallInst::Create(PointerSignFunc, {PointerValueToStore});
     PointerSignInst->insertBefore(SI);
 
@@ -266,11 +313,6 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
 
   // Add pointer authentication inst after pointer load inst
   for (auto LI : LoadPointerInsts) {
-
-    if (!pointerAuthenticationIsSuitable(*LI, F, AA)) {
-      continue;
-    }
-
     auto *PointerAuthInst = CallInst::Create(PointerAuthFunc, {LI});
     PointerAuthInst->insertAfter(LI);
 
@@ -286,11 +328,29 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
 }
 
 bool WebAssemblyPointerAuthentication::runOnFunction(Function &F) {
-  std::cout << "Function: " << F.getName().str() << std::endl;
-
   AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
+
+  std::cout << "Function: " << F.getName().str() << std::endl;
+  // TODO: use the return value somehow
   return authenticateStoredAndLoadedPointers(F, AA);
 }
+
+// bool WebAssemblyPointerAuthentication::runOnModule(Module &M) {
+
+//   // TODO: figure out what to return
+//   bool result = true;
+
+//   for (Function &F : M) {
+//     std::cout << "Function: " << F.getName().str() << std::endl;
+
+//     AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>(F).getAAResults();
+
+//     // TODO: use the return value somehow
+//     authenticateStoredAndLoadedPointers(F, AA);
+//   }
+
+//   return result;
+// }
 
 } // namespace
 
@@ -301,6 +361,7 @@ INITIALIZE_PASS_BEGIN(WebAssemblyPointerAuthentication, DEBUG_TYPE,
 INITIALIZE_PASS_END(WebAssemblyPointerAuthentication, DEBUG_TYPE,
                     "WebAssembly Pointer Authentication", false, false)
 
+// ModulePass *llvm::createWebAssemblyPointerAuthenticationPass() {
 FunctionPass *llvm::createWebAssemblyPointerAuthenticationPass() {
   return new WebAssemblyPointerAuthentication();
 }
