@@ -88,3 +88,20 @@ define void @function3(i8** %string) {
     ret void
 }
 */
+
+// === TEST-CASE 5:
+
+void main(int argc, char **argv) {
+    // load pointer => comes from elsewhere (i.e. function parameter), so we shouldn't authenticate it
+    argv[0];
+}
+
+// Equivalent llvm-ir:
+/*
+define i32 @main(i32 %argc, i8** %argv) {
+    %1 = getelementptr i8*, i8** %argv, i32 0
+    %loaded_ptr = load i8*, i8** %1
+
+    ret i32 0
+}
+*/
