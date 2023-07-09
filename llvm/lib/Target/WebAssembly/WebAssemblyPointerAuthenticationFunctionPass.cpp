@@ -164,6 +164,21 @@ bool isExternalFunction(Function &F, Function &BaseFunction) {
   return false;
 }
 
+// void findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<Function*, 8> &FunctionCalls) {
+//   for (User *U : V.users()) {
+//     if (CallInst *CI = dyn_cast<CallInst>(U)) {
+//       for (Value *Arg : CI->args()) {
+//         if (Arg == &V) {
+//           FunctionCalls.emplace_back(CI->getCalledFunction());
+//         }
+//       }
+//     }
+//     // Consider all users, and recurse on them, not just the functions with value as parameter
+//     findAllFunctionsWhereValueIsPassedAsArgument(*U, FunctionCalls);
+//   }
+// }
+
+
 // Find all function calls that use the specified value as an argument.
 // Once we found a function, we also have to recursively find all of
 // the functions that use that function('s return value).
@@ -173,6 +188,7 @@ void findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<Function
 
   for (User *U : V.users()) {
     // TODO: we can't only consider function users, we also have to consider e.g. normal loads and stores, which are not function calls
+    // TODO: what if we add and subtract, and then use the new pointer to load => probably counts as an alias, but we could just recursively directly trace those calls
     if (CallInst *CI = dyn_cast<CallInst>(U)) {
       for (Value *Arg : CI->args()) {
         if (Arg == &V) {
@@ -190,59 +206,40 @@ void findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<Function
           // TODO: would a simple "if (CI == &V)" work?
           // Recursively checks if any other functions use the function's return value
           findAllFunctionsWhereValueIsPassedAsArgument(*CI, FunctionCalls);
-
-          break;
         }
       }
     }
   }
 }
 
+// A pointer has other uses if it is used as a parameter by any function.
+//
+// TODO: more tricky
 // A pointer has other uses if it is used as a parameter by external functions.
 bool valueHasOtherUses(Value &V, Function &F, AliasAnalysis &AA) {
-  SmallVector<Function*, 8> functionsUsingMemoryLocation;
-  findAllFunctionsWhereValueIsPassedAsArgument(V, functionsUsingMemoryLocation);
+  SmallVector<Function*, 8> functionsUsingValue;
+  findAllFunctionsWhereValueIsPassedAsArgument(V, functionsUsingValue);
 
-  // TODO: !functionsOutsideModuleUsingPointer.empty() vs assert that all functionsUsingPointer are from this module
-  for (auto function: functionsUsingMemoryLocation) {
-    // if (isExternalFunction(*function)) {
-    if (isExternalFunction(*function, F)) {
-      return true;
-    }
-    // TODO: we need a module pass with alias analysis having been performed on the entire module,
-    // since now we are basically analysing another function, and the alias analysis is not guaranteed to have run over this until now.
+  return !functionsUsingValue.empty();
+  // // TODO: !functionsOutsideModuleUsingPointer.empty() vs assert that all functionsUsingPointer are from this module
+  // for (auto function: functionsUsingValue) {
+  //   // if (isExternalFunction(*function)) {
+  //   if (isExternalFunction(*function, F)) {
+  //     return true;
+  //   }
+  //   // TODO: we need a module pass with alias analysis having been performed on the entire module,
+  //   // since now we are basically analysing another function, and the alias analysis is not guaranteed to have run over this until now.
 
-    // If our value is being passed as an argument to another function, we need to check that, in that other function, the pointer has no other uses as well.
-    // if (pointerAuthenticationIsSuitable())
-  }
+  //   // If our value is being passed as an argument to another function, we need to check that, recursively, in that other function, the pointer has no other uses as well.
+  //   // if (pointerAuthenticationIsSuitable())
+  // }
 
-  return false;
-}
-
-// Checks, recursively, whether a Value was returned by a function call.
-bool valueComesFromFunctionCall(Value *V) {
-  if (auto *I = dyn_cast<Instruction>(V)) {
-    // Check if instruction is (directly) the return value of a function call.
-    if (I->getOpcode() == Instruction::Call) {
-      return true;
-    }
-    
-    // Since `V` wasn't the returned value of a function directly, we have to
-    // check whether any of the parameters/operands of the instruction `V` are
-    // return values of functions.
-    for (auto &Op : I->operands()) {
-      if (valueComesFromFunctionCall(Op)) {
-        return true;
-      }
-    }
-  }
-  
-  return false;
+  // return false;
 }
 
 // Checks whether the value is a parameter of a function.
 bool valueIsParameterOfFunction(Value *V, Function *F) {
-  for (auto &arg : F->args()) {
+  for (Argument &arg : F->args()) {
     if (&arg == V) {
       return true;
     }
@@ -251,39 +248,50 @@ bool valueIsParameterOfFunction(Value *V, Function *F) {
 }
 
 // Checks whether a value "comes from elsewhere".
-// A value comes from elsewhere either if it was passed as a parameter to the
-// current function, or if it is is the return value of any function,
-// recursively.
+// A value comes from elsewhere if any of the following conditions are met:
+// 1. The value was passed as a parameter to the current function.
+// 2. The value is the return value of any function.
+// 3. The value was loaded from any memory location.
+// In case the current value/instruction does not come from elsewhere, we also
+// need to check whether any of its operands come from elsewhere.
 bool valueComesFromElsewhere(Value *V, Function *ParentFunction) {
   if (valueIsParameterOfFunction(V, ParentFunction)) {
+    errs() << "Value: " << V << " is the parameter of function: " << ParentFunction->getName() << "\n";
+
     return true;
   }
 
   // Checks, recursively, whether a Value was returned by a function call.
   if (auto *I = dyn_cast<Instruction>(V)) {
-    llvm::errs() << "Instruction: ";
-    I->print(llvm::errs());
-    llvm::errs() << "\n";
+    // llvm::errs() << "Instruction: ";
+    // I->print(llvm::errs());
+    // llvm::errs() << "\n";
 
     // Check if instruction is (directly) the return value of a function call.
-    if (I->getOpcode() == Instruction::Call) {
+    if (isa<CallInst>(I)) {
+      // errs() << "Instruction: " << I << " is the return value of a function call\n";
+      return true;
+    }
+    // Check if value was loaded from a memory location.
+    if (isa<LoadInst>(I)) {
       return true;
     }
     
-    // Since `V` wasn't the returned value of a function directly, we have to
-    // check whether any of the parameters/operands of the instruction `V` are
-    // return values of functions.
-    llvm::errs() << "  with operands: ";
+    // Since `V` doesn't come from elsewhere directly, we have to
+    // check whether any of the parameters/operands of the instruction `V`
+    // come from elsewhere.
+    // llvm::errs() << "  with operands: ";
     for (auto &Op : I->operands()) {
-      Op->print(llvm::errs());
+      // Op->print(llvm::errs());
 
       if (valueComesFromElsewhere(Op, ParentFunction)) {
         return true;
       }
     }
-    llvm::errs() << "\n";
+    // llvm::errs() << "\n";
   }
   
+  // errs() << "Value: " << V << " does not come from elsewhere\n";
   return false;
 }
 
@@ -295,6 +303,7 @@ bool valueComesFromElsewhere(Value *V, Function *ParentFunction) {
 // function.
 // A value also has other uses if any of its aliases have other uses.
 //
+// TODO:
 // Rule Relaxations (only possible with module pass):
 // - A value only has other uses if it is passed as a function parameter to an
 //   **external** function (aliases must still be accounted for though).
@@ -343,8 +352,11 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
         if (PointerValueToStore->getType()->isPointerTy()) {
           auto MemoryLocation = SI->getPointerOperand();
           if (storeIsSuitableForPA(*MemoryLocation, F, AA)) {
+            // errs() << "Store instruction: " << SI << " is suitable for pointer authentication\n";
             // We shouldn't mutate the instructions we are iterating over
             StorePointerInsts.emplace_back(SI);
+          } else {
+            // errs() << "Store instruction: " << SI << " is not suitable for pointer authentication\n";
           }
         }
       } else
@@ -354,12 +366,12 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
         if (LI->getType()->isPointerTy()) {
           auto MemoryLocation = LI->getPointerOperand();
           if (loadIsSuitableForPA(*MemoryLocation, F, AA)) {
-            errs() << "Load instruction: " << LI << " is suitable for pointer authentication\n";
+            // errs() << "Load instruction: " << LI << " is suitable for pointer authentication\n";
             // std::cout << "Load instruction: " << LI->getName().str() << " is suitable for pointer authentication\n";
             // We shouldn't mutate the instructions we are iterating over
             LoadPointerInsts.emplace_back(LI);
           } else {
-            errs() << "Load instruction: " << LI << " is not suitable for pointer authentication\n";
+            // errs() << "Load instruction: " << LI << " is not suitable for pointer authentication\n";
             // std::cout << "Load instruction: " << LI->getName().str() << " is not suitable for pointer authentication\n";
           }
         }
@@ -390,7 +402,7 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
     });
   }
 
-  // F.dump();
+  F.dump();
 
   return true;
 }
