@@ -247,17 +247,19 @@ bool valueIsParameterOfFunction(Value *V, Function *F) {
   return false;
 }
 
-// Checks whether a value "comes from elsewhere".
-// A value comes from elsewhere if any of the following conditions are met:
-// 1. The value was passed as a parameter to the current function.
-// 2. The value is the return value of any function.
-// 3. The value was loaded from any memory location.
-// In case the current value/instruction does not come from elsewhere, we also
-// need to check whether any of its operands come from elsewhere.
-bool valueComesFromElsewhere(Value *V, Function *ParentFunction) {
-  if (valueIsParameterOfFunction(V, ParentFunction)) {
-    errs() << "Value: " << V << " is the parameter of function: " << ParentFunction->getName() << "\n";
+bool valueComesFromElsewhereHelper(Value *V, Function *ParentFunction, std::set<Value*> &VisitedValues) {
+  errs() << "Checking value: " << V->getName().str() << "\n";
 
+  auto [_, wasInserted] = VisitedValues.insert(V);
+  if (!wasInserted) {
+    // We found a value we have seen before, so were are in some sort of loop (maybe alias?)
+    // We want to be extra careful here, so we say it comes from elsewhere if there's some loop
+    errs() << "Found value we have seen before: " << V->getName().str() << "; exiting to prevent infinite loop\n";
+    return true;
+  }
+
+  if (valueIsParameterOfFunction(V, ParentFunction)) {
+    errs() << "Value: " << V->getName().str() << " is the parameter of function: " << ParentFunction->getName() << "\n";
     return true;
   }
 
@@ -284,7 +286,7 @@ bool valueComesFromElsewhere(Value *V, Function *ParentFunction) {
     for (auto &Op : I->operands()) {
       // Op->print(llvm::errs());
 
-      if (valueComesFromElsewhere(Op, ParentFunction)) {
+      if (valueComesFromElsewhereHelper(Op, ParentFunction, VisitedValues)) {
         return true;
       }
     }
@@ -293,6 +295,18 @@ bool valueComesFromElsewhere(Value *V, Function *ParentFunction) {
   
   // errs() << "Value: " << V << " does not come from elsewhere\n";
   return false;
+}
+
+// Checks whether a value "comes from elsewhere".
+// A value comes from elsewhere if any of the following conditions are met:
+// 1. The value was passed as a parameter to the current function.
+// 2. The value is the return value of any function.
+// 3. The value was loaded from any memory location.
+// In case the current value/instruction does not come from elsewhere, we also
+// need to check whether any of its operands come from elsewhere.
+bool valueComesFromElsewhere(Value *V, Function *ParentFunction) {
+  std::set<Value*> VisitedValues;
+  return valueComesFromElsewhereHelper(V, ParentFunction, VisitedValues);
 }
 
 // Pointer Authentication Rules for Store Instructions:
@@ -334,6 +348,9 @@ bool loadIsSuitableForPA(Value &MemoryLocation, Function &F, AliasAnalysis &AA) 
 
 // TODO: what does the return bool mean?
 bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
+  errs() << "=== Starting analysis on function: " << F.getName().str() << "\n";
+  F.dump();
+
   auto *PointerSignFunc = Intrinsic::getDeclaration(
       F.getParent(), Intrinsic::wasm_pointer_sign);
   auto *PointerAuthFunc = Intrinsic::getDeclaration(
@@ -365,6 +382,8 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
         // Check if value to be loaded from memory is a pointer
         if (LI->getType()->isPointerTy()) {
           auto MemoryLocation = LI->getPointerOperand();
+          errs() << "==== Checking if load: " << LI->getName().str() << " is suitable for PA\n";
+
           if (loadIsSuitableForPA(*MemoryLocation, F, AA)) {
             // errs() << "Load instruction: " << LI << " is suitable for pointer authentication\n";
             // std::cout << "Load instruction: " << LI->getName().str() << " is suitable for pointer authentication\n";
@@ -409,6 +428,9 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
 
 bool WebAssemblyPointerAuthenticationFunction::runOnFunction(Function &F) {
   AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
+
+  // F.dump();
+  // return true;
 
   // errs() << "Function: " << F << "\n";
   // std::cout << "Function: " << F.getName().str() << std::endl;
