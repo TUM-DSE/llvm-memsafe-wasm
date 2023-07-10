@@ -212,7 +212,8 @@ void findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<Function
   }
 }
 
-// A pointer has other uses if it is used as a parameter by any function.
+// A value has other uses if it is passed as a function parameter to any other
+// function.
 //
 // TODO: more tricky
 // A pointer has other uses if it is used as a parameter by external functions.
@@ -238,33 +239,36 @@ bool valueHasOtherUses(Value &V, Function &F, AliasAnalysis &AA) {
 }
 
 // Checks whether the value is a parameter of a function.
-bool valueIsParameterOfFunction(Value *V, Function *F) {
-  for (Argument &arg : F->args()) {
-    if (&arg == V) {
+bool valueIsParameterOfFunction(Value &V, Function &F) {
+  for (Argument &arg : F.args()) {
+    if (&arg == &V) {
       return true;
     }
   }
   return false;
 }
 
-bool valueComesFromElsewhereHelper(Value *V, Function *ParentFunction, std::set<Value*> &VisitedValues) {
-  errs() << "Checking value: " << V->getName().str() << "\n";
+// Tracks all visited values, and skips recursive call if we have already
+// visited a certain value before (to avoid endless recursion).
+bool valueComesFromElsewhereHelper(Value &V, Function &ParentFunction, std::set<Value*> &VisitedValues) {
+  errs() << "Checking value: " << V.getName().str() << "\n";
 
-  auto [_, wasInserted] = VisitedValues.insert(V);
+  auto [_, wasInserted] = VisitedValues.insert(&V);
   if (!wasInserted) {
     // We found a value we have seen before, so were are in some sort of loop (maybe alias?)
     // We want to be extra careful here, so we say it comes from elsewhere if there's some loop
-    errs() << "Found value we have seen before: " << V->getName().str() << "; exiting to prevent infinite loop\n";
-    return true;
+    errs() << "Found value we have seen before: " << V.getName().str() << "; exiting to prevent infinite loop\n";
+    // return true;
+    return false;
   }
 
   if (valueIsParameterOfFunction(V, ParentFunction)) {
-    errs() << "Value: " << V->getName().str() << " is the parameter of function: " << ParentFunction->getName() << "\n";
+    errs() << "Value: " << V.getName().str() << " is the parameter of function: " << ParentFunction.getName() << "\n";
     return true;
   }
 
   // Checks, recursively, whether a Value was returned by a function call.
-  if (auto *I = dyn_cast<Instruction>(V)) {
+  if (auto *I = dyn_cast<Instruction>(&V)) {
     // llvm::errs() << "Instruction: ";
     // I->print(llvm::errs());
     // llvm::errs() << "\n";
@@ -286,7 +290,7 @@ bool valueComesFromElsewhereHelper(Value *V, Function *ParentFunction, std::set<
     for (auto &Op : I->operands()) {
       // Op->print(llvm::errs());
 
-      if (valueComesFromElsewhereHelper(Op, ParentFunction, VisitedValues)) {
+      if (valueComesFromElsewhereHelper(*Op, ParentFunction, VisitedValues)) {
         return true;
       }
     }
@@ -304,10 +308,42 @@ bool valueComesFromElsewhereHelper(Value *V, Function *ParentFunction, std::set<
 // 3. The value was loaded from any memory location.
 // In case the current value/instruction does not come from elsewhere, we also
 // need to check whether any of its operands come from elsewhere.
-bool valueComesFromElsewhere(Value *V, Function *ParentFunction) {
+bool valueComesFromElsewhere(Value &V, Function &ParentFunction) {
   std::set<Value*> VisitedValues;
   return valueComesFromElsewhereHelper(V, ParentFunction, VisitedValues);
 }
+
+// Pointer Authentication Rules:
+//
+// A pointer (value), that is being stored in or loaded from a memory location,
+// is suitable for pointer authentication, if that memory location has no other
+// uses and does not come from elsewhere.
+// A pointer is not suitable for PA, if any of its aliases are not suitable for
+// PA.
+//
+// TODO:
+// Rule Relaxations (only possible with module pass):
+// - A value only has other uses if it is passed as a function parameter to an
+//   **external** function (aliases must still be accounted for though).
+bool memoryLocationIsSuitableForPA(Value &MemoryLocation, Function &F, AliasAnalysis &AA) {
+  SmallVector<Value*, 8> Aliases;
+  findAllAliasesOfValue(MemoryLocation, Aliases, AA, F);
+
+  // TODO: optimization possibility: cache the aliases that were already found to be non-suitable
+  // If any of the aliases are not suitable, then all of the aliases should be not suitable
+  for (auto Alias : Aliases) {
+    if (valueHasOtherUses(*Alias, F, AA)) {
+      return false;
+    }
+
+    if (valueComesFromElsewhere(*Alias, F)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 
 // Pointer Authentication Rules for Store Instructions:
 //
@@ -343,7 +379,7 @@ bool storeIsSuitableForPA(Value &MemoryLocation, Function &F, AliasAnalysis &AA)
 // TODO: aliases
 // TODO: only disallow if it comes from an external function
 bool loadIsSuitableForPA(Value &MemoryLocation, Function &F, AliasAnalysis &AA) {
-  return !valueComesFromElsewhere(&MemoryLocation, &F);
+  return !valueComesFromElsewhere(MemoryLocation, F);
 }
 
 // TODO: what does the return bool mean?
