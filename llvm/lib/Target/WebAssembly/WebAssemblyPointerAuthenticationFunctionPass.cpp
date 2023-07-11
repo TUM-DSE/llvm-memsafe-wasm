@@ -39,6 +39,7 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/CodeGen/TargetRegisterInfo.h"
+#include "llvm/IR/GlobalValue.h"
 #include "llvm/IR/Attributes.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
@@ -267,6 +268,12 @@ bool valueComesFromElsewhereHelper(Value &V, Function &ParentFunction, std::set<
     return true;
   }
 
+  // A global value could be used across different modules, so we can never control/know that global values aren't used elsewhere
+  if (isa<GlobalValue>(&V)) {
+    errs() << "Value: " << V.getName().str() << " is a global value\n";
+    return true;
+  }
+
   // Checks, recursively, whether a Value was returned by a function call.
   if (auto *I = dyn_cast<Instruction>(&V)) {
     // llvm::errs() << "Instruction: ";
@@ -385,7 +392,7 @@ bool loadIsSuitableForPA(Value &MemoryLocation, Function &F, AliasAnalysis &AA) 
 // TODO: what does the return bool mean?
 bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
   errs() << "=== Starting analysis on function: " << F.getName().str() << "\n";
-  F.dump();
+  // F.dump();
 
   auto *PointerSignFunc = Intrinsic::getDeclaration(
       F.getParent(), Intrinsic::wasm_pointer_sign);
@@ -404,6 +411,8 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
         Value *PointerValueToStore = SI->getValueOperand();
         if (PointerValueToStore->getType()->isPointerTy()) {
           auto MemoryLocation = SI->getPointerOperand();
+          errs() << "==== Checking if store: " << SI->getName().str() << " is suitable for PA\n";
+
           if (storeIsSuitableForPA(*MemoryLocation, F, AA)) {
             // errs() << "Store instruction: " << SI << " is suitable for pointer authentication\n";
             // We shouldn't mutate the instructions we are iterating over
