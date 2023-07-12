@@ -1,11 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-void my_gets(char *str) {
-  while ((*str++ = getc(stdin)) != '\n')
-    ;
-}
-
 __attribute__((noinline))
 int main() {
     char *string = "Hello World!";
@@ -17,9 +12,7 @@ int main() {
 	char name[10];
 
 	printf("What is your name?\n");
-	// scanf("%s", name);
-	// fgets(name, sizeof(name), stdin);
-    my_gets(name);
+	scanf("%s", name);
 
 	printf("Hello user %s!\n", name);
 

@@ -126,15 +126,6 @@ void findAllAliasesOfValue(Value &V, SmallVector<Value *, 8> &Aliases, AliasAnal
         continue;
       }
 
-      // if (auto OtherValue = dyn_cast<Value>(&I)) {
-        // TODO: !isNoAlias is more conservative than isMustAlias, because we also ignore cases of isMaybeAlias; either way non-deterministic?
-        // if (!AA.isNoAlias(&V, OtherValue)) {
-        // // if (AA.isMustAlias(&V, OtherValue)) {
-        //   std::cout << "  Other value \"" << OtherValue->getName().str() << "\"" << std::endl;
-        //   Aliases.emplace_back(OtherValue);
-        // }
-      // }
-
       AliasResult aliasResult = AA.alias(&V, &OtherValue);
       // if (!AA.isNoAlias()) {
       if (aliasResult != AliasResult::NoAlias) {
@@ -144,20 +135,6 @@ void findAllAliasesOfValue(Value &V, SmallVector<Value *, 8> &Aliases, AliasAnal
       }
     }
   }
-
-  // // Perform alias analysis on the instruction or value
-  // AliasSetTracker AST(AA);
-  // AST.add(*InstToAnalyze);
-  // AST.complete();
-
-  // // Iterate over alias sets and print the aliasing values
-  // for (llvm::AliasSet& AS : AST) {
-  //   for (llvm::AliasSet::iterator I = AS.begin(), E = AS.end(); I != E; ++I) {
-  //     llvm::Value* AliasedValue = *I;
-  //     // Do something with the aliased value
-  //   }
-  // }
-
 }
 
 // We define a function as external if it is declared, but not defined, in
@@ -214,6 +191,9 @@ void findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<Function
 }
 
 // A pointer has other uses if it is used as a parameter by external functions.
+//
+// TODO: more tricky
+// A pointer has other uses if it is used as a parameter by external functions.
 bool valueHasOtherUses(Value &Pointer, Function &F, AliasAnalysis &AA) {
   SmallVector<Function*, 8> functionsUsingPointer;
   findAllFunctionsWhereValueIsPassedAsArgument(Pointer, functionsUsingPointer);
@@ -230,6 +210,21 @@ bool valueHasOtherUses(Value &Pointer, Function &F, AliasAnalysis &AA) {
     // If our value is being passed as an argument to another function, we need to check that, in that other function, the pointer has no other uses as well.
     // if (pointerAuthenticationIsSuitable())
   }
+
+  // // TODO: !functionsOutsideModuleUsingPointer.empty() vs assert that all functionsUsingPointer are from this module
+  // for (auto function: functionsUsingValue) {
+  //   // if (isExternalFunction(*function)) {
+  //   if (isExternalFunction(*function, F)) {
+  //     return true;
+  //   }
+  //   // TODO: we need a module pass with alias analysis having been performed on the entire module,
+  //   // since now we are basically analysing another function, and the alias analysis is not guaranteed to have run over this until now.
+
+  //   // If our value is being passed as an argument to another function, we need to check that, recursively, in that other function, the pointer has no other uses as well.
+  //   // if (pointerAuthenticationIsSuitable())
+  // }
+
+  // return false;
 
   return false;
 }
@@ -260,6 +255,35 @@ bool pointerAuthenticationIsSuitable(Value &Pointer, Function &F, AliasAnalysis 
 
   return true;
 }
+
+// Pointer Authentication Rules:
+//
+// A pointer (value), that is being stored in or loaded from a memory location,
+// is suitable for pointer authentication, if that memory location has no other
+// uses and does not come from elsewhere.
+// A pointer is only suitable for PA, if all of its aliases are also suitable for
+// PA.
+//
+// TODO:
+// Rule Relaxations (only possible with module pass):
+// - A value only has other uses if it is passed as a function parameter to an
+//   **external** function (aliases must still be accounted for though) or comes
+//   from such a function.
+// bool memoryLocationIsSuitableForPA(Value &MemoryLocation, Function &F, AliasAnalysis &AA) {
+//   SmallVector<Value*, 8> Aliases;
+//   findAllAliasesOfValue(MemoryLocation, Aliases, AA, F);
+
+//   // TODO: optimization possibility: cache the aliases that were already found to be non-suitable
+//   // If any of the aliases are not suitable, then all of the aliases should be not suitable
+//   for (auto Alias : Aliases) {
+//     if (valueHasOtherUses(*Alias, F, AA) || valueComesFromElsewhere(*Alias, F)) {
+//       return false;
+//     }
+//   }
+
+//   return true;
+// }
+
 
 // TODO: what does the return bool mean?
 bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
