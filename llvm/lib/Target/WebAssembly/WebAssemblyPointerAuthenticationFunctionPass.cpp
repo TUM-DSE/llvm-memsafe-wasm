@@ -156,10 +156,16 @@ void findAllAliasesOfValue(Value &V, SmallVector<Value *, 8> &Aliases, AliasAnal
 // }
 
 
-// Find all function calls that use the specified value as an argument.
-// Once we found a function, we also have to recursively find all of
-// the functions that use that function('s return value).
-void findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<Function*, 8> &FunctionCalls) {
+// Tracks all visited values, and skips recursive call if we have already
+// visited a certain value before (to avoid endless recursion).
+void findAllFunctionsWhereValueIsPassedAsArgumentHelper(Value &V, SmallVector<Function*, 8> &FunctionCalls, std::set<Value*> &VisitedValues) {
+  auto [_, ValueWasInserted] = VisitedValues.insert(&V);
+  if (!ValueWasInserted) {
+    // We found a value we have seen before, so were are in some sort of loop.
+    // Therefore, we have already checked this value and all of its users.
+    return;
+  }
+
   // std::cout << "  Value \"" << V.getName().str() << "\" is used in functions:" << std::endl;
   // errs() << "  Value \"" << V << "\" is used in functions:\n";
 
@@ -182,8 +188,16 @@ void findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<Function
       }
     }
     // Consider all users, and recurse on them, not just the functions with value as parameter
-    findAllFunctionsWhereValueIsPassedAsArgument(*U, FunctionCalls);
+    findAllFunctionsWhereValueIsPassedAsArgumentHelper(*U, FunctionCalls, VisitedValues);
   }
+}
+
+// Find all function calls that use the specified value as an argument.
+// Once we found a function, we also have to recursively find all of
+// the functions that use that function('s return value).
+void findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<Function*, 8> &FunctionCalls) {
+  std::set<Value*> VisitedValues;
+  return findAllFunctionsWhereValueIsPassedAsArgumentHelper(V, FunctionCalls, VisitedValues);
 }
 
 // A value has other uses if it is passed as a function parameter to any other
@@ -210,8 +224,8 @@ bool valueIsParameterOfFunction(Value &V, Function &F) {
 bool valueComesFromElsewhereHelper(Value &V, Function &ParentFunction, std::set<Value*> &VisitedValues) {
   // errs() << "Checking value: " << V.getName().str() << "\n";
 
-  auto [_, wasInserted] = VisitedValues.insert(&V);
-  if (!wasInserted) {
+  auto [_, ValueWasInserted] = VisitedValues.insert(&V);
+  if (!ValueWasInserted) {
     // We found a value we have seen before, so were are in some sort of loop.
     // Therefore, we continue searching, but skip re-entering the loop.
     // errs() << "Found value we have seen before: " << V.getName().str() << "; exiting to prevent infinite loop\n";
@@ -375,7 +389,7 @@ bool WebAssemblyPointerAuthenticationFunction::runOnFunction(Function &F) {
   // TODO: use the return value somehow, or remove it
   authenticateStoredAndLoadedPointers(F, AA);
 
-  F.dump();
+  // F.dump();
 
   // No changes relevant to other LLVM transformation passes were made.
   // We simply added some instructions other passes are unaware of anyways.
