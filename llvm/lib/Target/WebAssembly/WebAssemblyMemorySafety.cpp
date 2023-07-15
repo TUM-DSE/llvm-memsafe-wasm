@@ -63,6 +63,7 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/MemoryTaggingSupport.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include <algorithm>
 #include <cassert>
 #include <list>
@@ -175,13 +176,7 @@ public:
 private:
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
-  }
-
-  bool isAllocKind(Attribute Attr, AllocFnKind Kind) const {
-    if (!Attr.hasAttribute(Attribute::AllocKind))
-      return false;
-
-    return (Attr.getAllocKind() & Kind) != AllocFnKind::Unknown;
+    AU.addRequired<TargetLibraryInfoWrapperPass>();
   }
 
   Value *alignAllocSize(Value *AllocSize, Instruction *InsertBefore) {
@@ -198,6 +193,63 @@ private:
   }
 };
 
+bool isAllocKind(Attribute Attr, AllocFnKind Kind) {
+  if (!Attr.hasAttribute(Attribute::AllocKind))
+    return false;
+
+  return (Attr.getAllocKind() & Kind) != AllocFnKind::Unknown;
+}
+
+// A flattened (each option contains no more "hidden" options through a bitmap)
+// version of AllocKind. This contains all AllocKind's that C supports, so if we
+// ever want to support more languages, we would have to extend this.
+enum class FlattenedAllocKind {
+  // Alloc + Uninitialized + Aligned
+  AlignedAlloc,
+  // Alloc + Uninitialized
+  Malloc,
+  // Alloc + Zeroed
+  Calloc,
+  // Realloc
+  Realloc,
+  // Free
+  Free,
+  // We don't handle/support these kinds of AllocKind
+  Unhandled,
+};
+
+struct FlattenedAllocData {
+  FlattenedAllocKind kind;
+  Value* alignment = nullptr;
+};
+
+FlattenedAllocData flattenAllocKind(Attribute Attr, const CallBase *Call, const TargetLibraryInfo *TLI) {
+  FlattenedAllocData data;
+
+  if (isAllocKind(Attr, AllocFnKind::Alloc) && isAllocKind(Attr, AllocFnKind::Uninitialized) && isAllocKind(Attr, AllocFnKind::Aligned)) {
+    data.kind = FlattenedAllocKind::AlignedAlloc;
+    data.alignment = Call->getArgOperandWithAttribute(Attribute::AllocAlign);
+    assert(data.alignment != nullptr && "Expected an alignment value for aligned_alloc-like function, but found none!");
+  }
+  else if (isAllocKind(Attr, AllocFnKind::Alloc) && isAllocKind(Attr, AllocFnKind::Uninitialized)) {
+    data.kind = FlattenedAllocKind::Malloc;
+  }
+  else if (isAllocKind(Attr, AllocFnKind::Alloc) && isAllocKind(Attr, AllocFnKind::Zeroed)) {
+    data.kind = FlattenedAllocKind::Calloc;
+  }
+  else if (isAllocKind(Attr, AllocFnKind::Realloc)) {
+    data.kind = FlattenedAllocKind::Realloc;
+  }
+  else if (isAllocKind(Attr, AllocFnKind::Free)) {
+    data.kind = FlattenedAllocKind::Free;
+  }
+  else {
+    data.kind = FlattenedAllocKind::Unhandled;
+  }
+  
+  return data;
+}
+
 bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
   if (!F.hasFnAttribute(Attribute::SanitizeWasmMemSafety) ||
       F.getName().starts_with("__wasm_memsafety_"))
@@ -205,9 +257,10 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
 
   DataLayout DL = F.getParent()->getDataLayout();
   LLVMContext &Ctx(F.getContext());
+  TargetLibraryInfo *TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
 
   SmallVector<AllocaInst *, 8> AllocaInsts;
-  SmallVector<std::pair<AllocFnKind, CallInst *>, 8> CallsToAllocFunctions;
+  SmallVector<std::pair<FlattenedAllocData, CallInst *>, 8> CallsToAllocFunctions;
 
   for (auto &BB : F) {
     for (auto &I : BB) {
@@ -222,68 +275,113 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
       }
       if (auto *Call = dyn_cast<CallInst>(&I)) {
         auto *CalledFunction = Call->getCalledFunction();
-        auto Attr =
-            CalledFunction->getFnAttribute(Attribute::AttrKind::AllocKind);
+        auto Attr = CalledFunction->getFnAttribute(Attribute::AllocKind);
+
         if (Attr.hasAttribute(Attribute::AllocKind)) {
-          if (isAllocKind(Attr, AllocFnKind::Alloc)) {
-            CallsToAllocFunctions.emplace_back(
-                std::pair(AllocFnKind::Alloc, Call));
-          } else if (isAllocKind(Attr, AllocFnKind::Realloc)) {
-            CallsToAllocFunctions.emplace_back(
-                std::pair(AllocFnKind::Realloc, Call));
-          } else if (isAllocKind(Attr, AllocFnKind::Free)) {
-            CallsToAllocFunctions.emplace_back(
-                std::pair(AllocFnKind::Free, Call));
+          // Flatten the AllocKind so we can check if we want to/can replace
+          // this with our "__wasm_memsafety_" wrappers.
+          auto FlattenedAllocData = flattenAllocKind(Attr, Call, TLI);
+
+          if (FlattenedAllocData.kind == FlattenedAllocKind::Unhandled) {
+            // It's better to abruptly terminate than to allow an unsafe
+            // allocation function, which invalidates all kinds of system
+            // state/assumptions.
+            llvm::report_fatal_error("Unhandled alloc kind encountered", false);
           }
-          // if (isAllocKind(Attr, AllocFnKind::Uninitialized)) {
-          //   errs() << "AllocKind Uninitialized\n";
-          // }
-          // if (isAllocKind(Attr, AllocFnKind::Zeroed)) {
-          //   errs() << "AllocKind Zeroed\n";
-          // }
-          // if (isAllocKind(Attr, AllocFnKind::Aligned)) {
-          //   errs() << "AllocKind Aligned\n";
-          // }
+
+          CallsToAllocFunctions.emplace_back(FlattenedAllocData, Call);
         }
       }
     }
   }
 
-  auto SafeMallocFn = F.getParent()->getOrInsertFunction(
-      "__wasm_memsafety_malloc",
+  auto SafeAlignedAllocFn = F.getParent()->getOrInsertFunction(
+      "__wasm_memsafety_aligned_alloc",
       FunctionType::get(PointerType::getInt8PtrTy(Ctx),
                         {
                             Type::getInt64Ty(Ctx),
                             Type::getInt64Ty(Ctx),
                         },
                         false));
+  auto SafeMallocFn = F.getParent()->getOrInsertFunction(
+      "__wasm_memsafety_malloc",
+      FunctionType::get(PointerType::getInt8PtrTy(Ctx),
+                        {
+                            Type::getInt64Ty(Ctx),
+                        },
+                        false));
+  auto SafeCallocFn = F.getParent()->getOrInsertFunction(
+      "__wasm_memsafety_calloc",
+      FunctionType::get(PointerType::getInt8PtrTy(Ctx),
+                        {
+                            Type::getInt64Ty(Ctx),
+                            Type::getInt64Ty(Ctx),
+                        },
+                        false));
+  auto SafeReallocFn = F.getParent()->getOrInsertFunction(
+      "__wasm_memsafety_realloc",
+      FunctionType::get(PointerType::getInt8PtrTy(Ctx),
+                        {
+                            Type::getInt8PtrTy(Ctx),
+                            Type::getInt64Ty(Ctx),
+                        },
+                        false));
   auto SafeFreeFn = F.getParent()->getOrInsertFunction(
-      "__wasm_memsafety_free", FunctionType::get(Type::getVoidTy(Ctx),
-                                                 {
-                                                     Type::getInt8PtrTy(Ctx),
-                                                 },
-                                                 false));
+      "__wasm_memsafety_free",
+      FunctionType::get(Type::getVoidTy(Ctx),
+                        {
+                            Type::getInt8PtrTy(Ctx),
+                        },
+                        false));
 
-  for (auto [Kind, Call] : CallsToAllocFunctions) {
-    switch (Kind) {
-    case llvm::AllocFnKind::Alloc: {
-      // TODO: handle functions other than c malloc
-      auto *NewCall = CallInst::Create(SafeMallocFn,
-                                       {ConstantInt::get(Type::getInt64Ty(Ctx),
-                                                         /* align = */ 16),
-                                        Call->getArgOperand(0)},
-                                       Call->getName(), Call);
-      Call->replaceAllUsesWith(NewCall);
-      break;
-    }
-    case llvm::AllocFnKind::Free: {
-      auto *NewCall = CallInst::Create(SafeFreeFn, {Call->getArgOperand(0)},
-                                       Call->getName(), Call);
-      Call->replaceAllUsesWith(NewCall);
-      break;
-    }
-    default:
-      llvm_unreachable("Not yet implemented.");
+
+  for (auto [AllocData, Call] : CallsToAllocFunctions) {
+    switch (AllocData.kind) {
+      case FlattenedAllocKind::AlignedAlloc: {
+        // Handle functions like C's aligned_alloc
+        auto *NewCall = CallInst::Create(SafeAlignedAllocFn,
+                                        // TODO: maybe we can just use getArgOperand(0) directly, that would be cleaner
+                                        {AllocData.alignment,
+                                          Call->getArgOperand(1)},
+                                        Call->getName(), Call);
+        Call->replaceAllUsesWith(NewCall);
+        break;
+      }
+      case FlattenedAllocKind::Malloc: {
+        // Handle functions like C's malloc
+        auto *NewCall = CallInst::Create(SafeMallocFn,
+                                        {Call->getArgOperand(0)},
+                                        Call->getName(), Call);
+        Call->replaceAllUsesWith(NewCall);
+        break;
+      }
+      case FlattenedAllocKind::Realloc: {
+        // Handle functions like C's realloc
+        auto *NewCall = CallInst::Create(SafeReallocFn,
+                                        {Call->getArgOperand(0),
+                                          Call->getArgOperand(1)},
+                                        Call->getName(), Call);
+        Call->replaceAllUsesWith(NewCall);
+        break;
+      }
+      case FlattenedAllocKind::Calloc: {
+        // Handle functions like C's calloc
+        auto *NewCall = CallInst::Create(SafeCallocFn,
+                                        {Call->getArgOperand(0),
+                                          Call->getArgOperand(1)},
+                                        Call->getName(), Call);
+        Call->replaceAllUsesWith(NewCall);
+        break;
+      }
+      case FlattenedAllocKind::Free: {
+        // Handle functions like C's free
+        auto *NewCall = CallInst::Create(SafeFreeFn, {Call->getArgOperand(0)},
+                                        Call->getName(), Call);
+        Call->replaceAllUsesWith(NewCall);
+        break;
+      }
+      default:
+        llvm_unreachable("We should never arrive here, as we already threw an error for this match before.");
     }
     Call->eraseFromParent();
   }
@@ -294,6 +392,7 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
   auto *FreeSegmentStackFunc = Intrinsic::getDeclaration(
       F.getParent(), Intrinsic::wasm_segment_stack_free);
 
+  // Alloca stack allocations
   for (auto *Alloca : AllocaInsts) {
     Alloca->setAlignment(std::max(Alloca->getAlign(), Align(16)));
 

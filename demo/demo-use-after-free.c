@@ -20,8 +20,10 @@ int main(int argc, char **argv) {
 	}
 	printf("val = %d\n", x[index]);
 
-	free((void *) x);
+	// avoid double free and memory-leak, though program should crash before this anyways if MTE works
+	if (!free_first) {
+		free((void *) x);
+	}
 
 	return 0;
 }
-
