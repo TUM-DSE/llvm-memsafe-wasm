@@ -21,6 +21,7 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/StackSafetyAnalysis.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/CodeGen/LiveRegUnits.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
@@ -175,6 +176,7 @@ public:
 private:
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
+    AU.addRequiredTransitive<TargetLibraryInfoWrapperPass>();
   }
 
   bool isAllocKind(Attribute Attr, AllocFnKind Kind) const {
@@ -203,6 +205,8 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
       F.getName().starts_with("__wasm_memsafety_"))
     return false;
 
+  auto &TLIAnalysis = getAnalysis<TargetLibraryInfoWrapperPass>();
+
   DataLayout DL = F.getParent()->getDataLayout();
   LLVMContext &Ctx(F.getContext());
 
@@ -222,6 +226,7 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
       }
       if (auto *Call = dyn_cast<CallInst>(&I)) {
         auto *CalledFunction = Call->getCalledFunction();
+        inferNonMandatoryLibFuncAttrs(CalledFunction->getParent(), CalledFunction->getName(), TLIAnalysis.getTLI(F));
         auto Attr =
             CalledFunction->getFnAttribute(Attribute::AttrKind::AllocKind);
         if (Attr.hasAttribute(Attribute::AllocKind)) {
