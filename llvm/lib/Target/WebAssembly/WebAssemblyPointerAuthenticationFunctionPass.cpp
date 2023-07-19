@@ -141,33 +141,19 @@ void findAllAliasesOfValue(Value &V, SmallVector<Value *, 8> &Aliases, AliasAnal
   }
 }
 
-// void findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<Function*, 8> &FunctionCalls) {
-  // for (User *U : V.users()) {
-  //   if (CallInst *CI = dyn_cast<CallInst>(U)) {
-  //     for (Value *Arg : CI->args()) {
-  //       if (Arg == &V) {
-  //         FunctionCalls.emplace_back(CI->getCalledFunction());
-  //       }
-  //     }
-  //   }
-  //   // Consider all users, and recurse on them, not just the functions with value as parameter
-  //   findAllFunctionsWhereValueIsPassedAsArgument(*U, FunctionCalls);
-  // }
-// }
-
-
 // Tracks all visited values, and skips recursive call if we have already
 // visited a certain value before (to avoid endless recursion).
 void findAllFunctionsWhereValueIsPassedAsArgumentHelper(Value &V, SmallVector<Function*, 8> &FunctionCalls, std::set<Value*> &VisitedValues) {
   auto [_, ValueWasInserted] = VisitedValues.insert(&V);
   if (!ValueWasInserted) {
+    errs() << "in find all functions where passed as param: Found value we have seen before: " << V.getName().str() << "; exiting to prevent infinite loop\n";
     // We found a value we have seen before, so were are in some sort of loop.
     // Therefore, we have already checked this value and all of its users.
     return;
   }
 
   // std::cout << "  Value \"" << V.getName().str() << "\" is used in functions:" << std::endl;
-  // errs() << "  Value \"" << V << "\" is used in functions:\n";
+  errs() << "  Value \"" << V << "\" is used in functions:\n";
 
   for (User *U : V.users()) {
     // TODO: we can't only consider function users, we also have to consider e.g. normal loads and stores, which are not function calls
@@ -176,7 +162,7 @@ void findAllFunctionsWhereValueIsPassedAsArgumentHelper(Value &V, SmallVector<Fu
       for (Value *Arg : CI->args()) {
         if (Arg == &V) {
           // std::cout << "    Function \"" << CI->getCalledFunction()->getName().str() << "\"" << std::endl;
-          // errs() << "    Function: " << CI << "\n";
+          errs() << "    Function: " << CI << "\n";
 
           FunctionCalls.emplace_back(CI->getCalledFunction());
 
@@ -222,24 +208,24 @@ bool valueIsParameterOfFunction(Value &V, Function &F) {
 // Tracks all visited values, and skips recursive call if we have already
 // visited a certain value before (to avoid endless recursion).
 bool valueComesFromElsewhereHelper(Value &V, Function &ParentFunction, std::set<Value*> &VisitedValues) {
-  // errs() << "Checking value: " << V.getName().str() << "\n";
+  errs() << "Checking value: " << V.getName().str() << "\n";
 
   auto [_, ValueWasInserted] = VisitedValues.insert(&V);
   if (!ValueWasInserted) {
     // We found a value we have seen before, so were are in some sort of loop.
     // Therefore, we continue searching, but skip re-entering the loop.
-    // errs() << "Found value we have seen before: " << V.getName().str() << "; exiting to prevent infinite loop\n";
+    errs() << "Found value we have seen before: " << V.getName().str() << "; exiting to prevent infinite loop\n";
     return false;
   }
 
   if (valueIsParameterOfFunction(V, ParentFunction)) {
-    // errs() << "Value: " << V.getName().str() << " is the parameter of function: " << ParentFunction.getName() << "\n";
+    errs() << "Value: " << V.getName().str() << " is the parameter of function: " << ParentFunction.getName() << "\n";
     return true;
   }
 
   // A global value could be used across different modules, so we can never control/know that global values aren't used elsewhere
   if (isa<GlobalValue>(&V)) {
-    // errs() << "Value: " << V.getName().str() << " is a global value\n";
+    errs() << "Value: " << V.getName().str() << " is a global value\n";
     return true;
   }
 
@@ -247,7 +233,7 @@ bool valueComesFromElsewhereHelper(Value &V, Function &ParentFunction, std::set<
   if (auto *I = dyn_cast<Instruction>(&V)) {
     // Check if instruction is (directly) the return value of a function call.
     if (isa<CallInst>(I)) {
-      // errs() << "Instruction: " << I << " is the return value of a function call\n";
+      errs() << "Instruction: " << I << " is the return value of a function call\n";
       return true;
     }
     // Check if value was loaded from a memory location, i.e. value is the
@@ -304,6 +290,8 @@ bool memoryLocationIsSuitableForPA(Value &MemoryLocation, Function &F, AliasAnal
   return true;
 }
 
+// Go through all load and stores of pointers and check if they are suitable for
+// pointer authentication.
 bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
   auto *PointerSignFunc = Intrinsic::getDeclaration(
       F.getParent(), Intrinsic::wasm_pointer_sign);
@@ -322,14 +310,14 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
         Value *PointerValueToStore = SI->getValueOperand();
         if (PointerValueToStore->getType()->isPointerTy()) {
           auto MemoryLocation = SI->getPointerOperand();
-          // errs() << "==== Checking if store: " << SI->getName().str() << " is suitable for PA\n";
+          errs() << "==== Checking if store: " << SI->getName().str() << " is suitable for PA\n";
 
           if (memoryLocationIsSuitableForPA(*MemoryLocation, F, AA)) {
-            // errs() << "Store instruction: " << SI << " is suitable for pointer authentication\n";
+            errs() << "Store instruction: " << SI << " is suitable for pointer authentication\n";
             // We shouldn't mutate the instructions we are iterating over
             StorePointerInsts.emplace_back(SI);
           } else {
-            // errs() << "Store instruction: " << SI << " is not suitable for pointer authentication\n";
+            errs() << "Store instruction: " << SI << " is not suitable for pointer authentication\n";
           }
         }
       } else
@@ -338,15 +326,15 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
         // Check if value to be loaded from memory is a pointer
         if (LI->getType()->isPointerTy()) {
           auto MemoryLocation = LI->getPointerOperand();
-          // errs() << "==== Checking if load: " << LI->getName().str() << " is suitable for PA\n";
+          errs() << "==== Checking if load: " << LI->getName().str() << " is suitable for PA\n";
 
           if (memoryLocationIsSuitableForPA(*MemoryLocation, F, AA)) {
-            // errs() << "Load instruction: " << LI << " is suitable for pointer authentication\n";
+            errs() << "Load instruction: " << LI << " is suitable for pointer authentication\n";
             // std::cout << "Load instruction: " << LI->getName().str() << " is suitable for pointer authentication\n";
             // We shouldn't mutate the instructions we are iterating over
             LoadPointerInsts.emplace_back(LI);
           } else {
-            // errs() << "Load instruction: " << LI << " is not suitable for pointer authentication\n";
+            errs() << "Load instruction: " << LI << " is not suitable for pointer authentication\n";
             // std::cout << "Load instruction: " << LI->getName().str() << " is not suitable for pointer authentication\n";
           }
         }
@@ -382,17 +370,22 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
 }
 
 bool WebAssemblyPointerAuthenticationFunction::runOnFunction(Function &F) {
-  // errs() << "=== Starting analysis on function: " << F.getName().str() << "\n";
+  errs() << "=== Starting analysis on function: " << F.getName().str() << "\n";
+  if (F.getName() != "__original_main") {
+    return false;
+  }
 
   AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
 
   // TODO: use the return value somehow, or remove it
-  authenticateStoredAndLoadedPointers(F, AA);
+  bool modified = authenticateStoredAndLoadedPointers(F, AA);
 
-  // F.dump();
+  F.dump();
 
   // No changes relevant to other LLVM transformation passes were made.
   // We simply added some instructions other passes are unaware of anyways.
-  bool modified = false;
+  // However, to be on the safe side, we will still indicate that the function
+  // was modified.
+  // TODO: potentially set to false in the future
   return modified;
 }
