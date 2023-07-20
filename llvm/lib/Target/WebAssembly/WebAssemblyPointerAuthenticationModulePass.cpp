@@ -100,6 +100,11 @@ public:
   }
 
 private:
+  AliasResult alias(Value &V1, Value &V2, Function &F) {
+    AliasAnalysis& AA = getAnalysis<AAResultsWrapperPass>(F).getAAResults();
+    return AA.alias(&V1, &V2);
+  }
+
   AliasAnalysis& getAliasAnalysisForFunction(Function &F) {
     return getAnalysis<AAResultsWrapperPass>(F).getAAResults();
   }
@@ -121,6 +126,14 @@ std::string getAliasResultString(AliasResult result) {
 // We define a function as external if it is declared, but not defined, in
 // the current module.
 bool isExternalFunction(Function &F, Module &ParentModule) {
+  if (&F == nullptr) {
+    // This might occur if the CallInst we tried to convert to a Function
+    // didn't have a known function signature at compile-time, e.g. because
+    // it was a function pointer. We can't track function pointers further,
+    // so we are conservative and mark this as potentially calling external
+    // functions.
+    return true;
+  }
   // std::cout << "==== Checking whether function \"" << F.getName().str() << "\" is an external function." << std::endl;
 
   // Sanity check: If the function belongs to a different module than the
@@ -163,8 +176,9 @@ void findAllAliasesOfValue(Value &V, SmallVector<Value*, 8> &Aliases, Function &
       }
 
       // AliasResult aliasResult = AA.alias(&V, &OtherValue);
-      // if (aliasResult != AliasResult::NoAlias) {
-      if (!AA.isNoAlias(&V, &OtherValue)) {
+      AliasResult aliasResult = alias(V, OtherValue, F);
+      if (aliasResult != AliasResult::NoAlias) {
+      // if (!AA.isNoAlias(&V, &OtherValue)) {
         // std::cout << "    Other value \"" << OtherValue.getName().str() << "\" is a: " << getAliasResultString(aliasResult) << std::endl;
 
         Aliases.emplace_back(&OtherValue);
@@ -173,9 +187,11 @@ void findAllAliasesOfValue(Value &V, SmallVector<Value*, 8> &Aliases, Function &
   }
 }
 
+// TODO: think about function pointers, what if those somehow call external functions
 // Tracks all visited values, and skips recursive call if we have already
 // visited a certain value before (to avoid endless recursion).
 void findAllFunctionsWhereValueIsPassedAsArgumentHelper(Value &V, SmallVector<Function*, 8> &FunctionCalls, std::set<Value*> &VisitedValues) {
+  // TODO: what about aliases? Are their users transitively counted as users as well? TEST this!!!
   auto [_, ValueWasInserted] = VisitedValues.insert(&V);
   if (!ValueWasInserted) {
     errs() << "in find all functions where passed as param: Found value we have seen before: " << V.getName().str() << "; exiting to prevent infinite loop\n";
@@ -185,23 +201,56 @@ void findAllFunctionsWhereValueIsPassedAsArgumentHelper(Value &V, SmallVector<Fu
   }
 
   // std::cout << "  Value \"" << V.getName().str() << "\" is used in functions:" << std::endl;
-  errs() << "  Value \"" << V << "\" is used in functions:\n";
+  // errs() << "  Value \"" << V << "\" is used in functions:\n";
 
   for (User *U : V.users()) {
     // TODO: we can't only consider function users, we also have to consider e.g. normal loads and stores, which are not function calls
     // TODO: what if we add and subtract, and then use the new pointer to load => probably counts as an alias, but we could just recursively directly trace those calls
+    // TODO: check for the superclass CallBase instead
     if (CallInst *CI = dyn_cast<CallInst>(U)) {
+      size_t ArgIndex = 0;
       for (Value *Arg : CI->args()) {
         if (Arg == &V) {
           // std::cout << "    Function \"" << CI->getCalledFunction()->getName().str() << "\"" << std::endl;
-          errs() << "    Function: " << CI << "\n";
+          // errs() << "    Function: " << CI << "\n";
 
-          // auto Function = CI->getCalledFunction();
-          FunctionCalls.emplace_back(CI->getCalledFunction());
+          auto PassedToFunction = CI->getCalledFunction();
 
-          // Therefore, once we see that a value is passed to a non-external function,
-          // we still need to check if the value has other uses in in that function.
+          // We avoid functions that aren't known at compile-time or take vararg inputs.
+          if (PassedToFunction == nullptr || PassedToFunction->arg_size() <= ArgIndex) {
+            // TODO: maybe we encountered a function pointer, and we don't know the signature of which at compile-time, this should be marked as an external function
+            // errs() << "We found a function that was a nullptr\n";
+            // TODO: this should immidiately return that this could has other uses
+            FunctionCalls.emplace_back(nullptr);
+
+            // Can't recurse futher
+            continue;
+          }
+
+          // errs() << "We found a function that was not a nullptr\n";
+
+          // We check for nullptr later on, so also add those
+          FunctionCalls.emplace_back(PassedToFunction);
+
+          // Once we see that a value is passed to a non-external function,
+          // we still need to check if the value has other users in that function.
+          Value *ValueAsArg = PassedToFunction->getArg(ArgIndex);
+
+          // The actual Value we passed to the function from another function
+          // differs from the parameter Value used inside the function.
+          assert(&V != ValueAsArg);
+
+          errs() << "Since Value " << V << " was passed to function " << PassedToFunction->getName() << " we need to recursively follow that function\n";
+          // TODO: maybe we actually have to call isMemoryLocationSuitable... here, since we need to account for aliases, and we can't do that with just findAllFunctions...
+          findAllFunctionsWhereValueIsPassedAsArgumentHelper(*ValueAsArg, FunctionCalls, VisitedValues);
+          // memoryLocationIsSuitableForPA(*ValueAsArg, *PassedToFunction, BaseModule);
+
+          // Continue iterating over parameters even if we found our Value,
+          // since the same Value could be passed multiple times to the
+          // same function.
         }
+
+        ++ArgIndex;
       }
     }
     // Also add all other functions that use the function's return value
@@ -234,15 +283,13 @@ bool valueHasOtherUses(Value &Value, Function &F, Module &BaseModule) {
     }
 
     // TODO: This is DFS, moving this to a second for loop would make it BFS, which might be more efficient in our case.
-    if (valueHasOtherUses(Value, *FunctionUsingValue, BaseModule)) {
-      return true;
-    }
+    // if (valueHasOtherUses(Value, *FunctionUsingValue, BaseModule)) {
+    //   return true;
+    // }
   }
 
   // TODO: optimization: don't find all functions, just the first one that is 
   // // TODO: !functionsOutsideModuleUsingPointer.empty() vs assert that all functionsUsingPointer are from this module
-
-  // return false;
 
   return false;
 }
@@ -284,6 +331,7 @@ bool valueComesFromElsewhereHelper(Value &V, Function &ParentFunction, std::set<
   // Checks, recursively, whether a Value was returned by a function call.
   if (auto *I = dyn_cast<Instruction>(&V)) {
     // Check if instruction is (directly) the return value of a function call.
+    // TODO: check for superclass CallBase instead
     if (isa<CallInst>(I)) {
       errs() << "Instruction: " << I << " is the return value of a function call\n";
       return true;
@@ -433,6 +481,9 @@ bool authenticateStoredAndLoadedPointers(Function &F, Module &BaseModule) {
     });
   }
 
+  // if (F.getName() == "__original_"
+  F.dump();
+
   // We made changes if we added any pointer sign or auth instructions.
   bool modified = !(LoadPointerInsts.empty() && StorePointerInsts.empty());
   return modified;
@@ -447,6 +498,7 @@ bool WebAssemblyPointerAuthenticationModule::runOnModule(Module &M) {
     //   return false;
     // }
 
+    // TODO: we have to only insert the new instructions at the end of the module pass
     if (authenticateStoredAndLoadedPointers(F, M)) {
       modified = true;
     }
