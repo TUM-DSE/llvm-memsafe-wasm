@@ -17,19 +17,21 @@
 
 
 // this function is external
-void external_function(int *ptr) {
-    *ptr = 42;
+void external_function(int **ptr) {
+    // load ptr and do sth
 }
 
 // this function is not external (since it is defined), but it does call an external function
-void non_external_function(int *ptr) {
+void non_external_function(int **ptr) {
     external_function(ptr);
 }
 
 // our llvm should detect that ptr has other uses, since it is indirectly passed to an external function
 int main() {
+    int *buf[4];
+
     int x = 16;
-    int *ptr = &x;
-    non_external_function(ptr);
+    buf[1] = &x;
+    non_external_function(&buf[1]);
     return 0;
 }

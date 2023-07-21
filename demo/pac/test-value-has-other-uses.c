@@ -58,3 +58,12 @@ void main() {
 // Equivalent llvm-ir:
 /*
 */
+
+
+// === TEST-CASE 3:
+
+// TODO: test vararg function
+
+// === TEST-CASE 4:
+
+// TODO: test function pointer, with if statement depending on input that will decide the function to be executed (or just read in a function and that gets executed)

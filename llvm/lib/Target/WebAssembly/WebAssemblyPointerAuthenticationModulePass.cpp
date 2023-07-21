@@ -126,24 +126,17 @@ std::string getAliasResultString(AliasResult result) {
 // We define a function as external if it is declared, but not defined, in
 // the current module.
 bool isExternalFunction(Function &F, Module &ParentModule) {
-  if (&F == nullptr) {
-    // This might occur if the CallInst we tried to convert to a Function
-    // didn't have a known function signature at compile-time, e.g. because
-    // it was a function pointer. We can't track function pointers further,
-    // so we are conservative and mark this as potentially calling external
-    // functions.
-    return true;
-  }
   // std::cout << "==== Checking whether function \"" << F.getName().str() << "\" is an external function." << std::endl;
 
   // Sanity check: If the function belongs to a different module than the
   // one we are currently analyzing, then it is definitely an external function.
   if (F.getParent() != &ParentModule) {
-    // errs() << "Found function from a different module: " << F.getName() << "\n";
+    errs() << "Found external function from a different module: " << F.getName() << "\n";
     return true;
   }
 
   if (F.isDeclaration() && !F.isIntrinsic()) {
+    errs() << "Found external function: " << F.getName() << "\n";
     // std::cout << "==== From the base function: " << BaseFunction.getName().str() << " Function \"" << F.getName().str() << "\" is an external function." << std::endl;
     // Check if the function has any external linkage
     // if (F.hasExternalLinkage() || F.hasAvailableExternallyLinkage()) {
@@ -162,8 +155,6 @@ bool isExternalFunction(Function &F, Module &ParentModule) {
 
 // TODO: read somewhere that AliasAnalysis does not account for loops apparently => test
 void findAllAliasesOfValue(Value &V, SmallVector<Value*, 8> &Aliases, Function &F) {
-  AliasAnalysis &AA = getAliasAnalysisForFunction(F);
-
   // The pointer itself counts as one of its own aliases
   Aliases.emplace_back(&V);
 
@@ -188,16 +179,20 @@ void findAllAliasesOfValue(Value &V, SmallVector<Value*, 8> &Aliases, Function &
 }
 
 // TODO: think about function pointers, what if those somehow call external functions
+
 // Tracks all visited values, and skips recursive call if we have already
 // visited a certain value before (to avoid endless recursion).
-void findAllFunctionsWhereValueIsPassedAsArgumentHelper(Value &V, SmallVector<Function*, 8> &FunctionCalls, std::set<Value*> &VisitedValues) {
+// If we encounter an unidentifiable function (e.g. function pointer,
+// vararg function, then we immediately return false.
+bool findAllFunctionsWhereValueIsPassedAsArgumentHelper(Value &V, SmallVector<Function*, 8> &FunctionCalls, std::set<Value*> &VisitedValues, Module &BaseModule) {
   // TODO: what about aliases? Are their users transitively counted as users as well? TEST this!!!
   auto [_, ValueWasInserted] = VisitedValues.insert(&V);
   if (!ValueWasInserted) {
     errs() << "in find all functions where passed as param: Found value we have seen before: " << V.getName().str() << "; exiting to prevent infinite loop\n";
     // We found a value we have seen before, so were are in some sort of loop.
     // Therefore, we have already checked this value and all of its users.
-    return;
+    // We want to continue searching, so don't mark this as an error.
+    return true;
   }
 
   // std::cout << "  Value \"" << V.getName().str() << "\" is used in functions:" << std::endl;
@@ -206,8 +201,8 @@ void findAllFunctionsWhereValueIsPassedAsArgumentHelper(Value &V, SmallVector<Fu
   for (User *U : V.users()) {
     // TODO: we can't only consider function users, we also have to consider e.g. normal loads and stores, which are not function calls
     // TODO: what if we add and subtract, and then use the new pointer to load => probably counts as an alias, but we could just recursively directly trace those calls
-    // TODO: check for the superclass CallBase instead
-    if (CallInst *CI = dyn_cast<CallInst>(U)) {
+    // We use CallBase to check for both InvokeInst and CallInst.
+    if (auto *CI = dyn_cast<CallBase>(U)) {
       size_t ArgIndex = 0;
       for (Value *Arg : CI->args()) {
         if (Arg == &V) {
@@ -216,34 +211,46 @@ void findAllFunctionsWhereValueIsPassedAsArgumentHelper(Value &V, SmallVector<Fu
 
           auto PassedToFunction = CI->getCalledFunction();
 
-          // We avoid functions that aren't known at compile-time or take vararg inputs.
+          // This might occur if the CallInst we tried to convert to a Function
+          // didn't have a known function signature at compile-time, e.g. because
+          // it was a function pointer, or if the argument size doesn't match
+          // the argument index, indicating a vararg function. We can't track
+          // function pointers further, so we are conservative and mark this
+          // as potentially calling external functions.
           if (PassedToFunction == nullptr || PassedToFunction->arg_size() <= ArgIndex) {
-            // TODO: maybe we encountered a function pointer, and we don't know the signature of which at compile-time, this should be marked as an external function
-            // errs() << "We found a function that was a nullptr\n";
-            // TODO: this should immidiately return that this could has other uses
-            FunctionCalls.emplace_back(nullptr);
-
-            // Can't recurse futher
-            continue;
+            errs() << "We found a function that takes as value but we don't want to handle: " << PassedToFunction->getName() << "\n";
+            return false;
           }
 
           // errs() << "We found a function that was not a nullptr\n";
 
-          // We check for nullptr later on, so also add those
+          // We only add valid function calls to the vector.
+          assert(PassedToFunction != nullptr);
           FunctionCalls.emplace_back(PassedToFunction);
 
-          // Once we see that a value is passed to a non-external function,
-          // we still need to check if the value has other users in that function.
+          // We need to check if our value has other users in the function
+          // it is passed to.
           Value *ValueAsArg = PassedToFunction->getArg(ArgIndex);
 
           // The actual Value we passed to the function from another function
           // differs from the parameter Value used inside the function.
           assert(&V != ValueAsArg);
 
-          errs() << "Since Value " << V << " was passed to function " << PassedToFunction->getName() << " we need to recursively follow that function\n";
-          // TODO: maybe we actually have to call isMemoryLocationSuitable... here, since we need to account for aliases, and we can't do that with just findAllFunctions...
-          findAllFunctionsWhereValueIsPassedAsArgumentHelper(*ValueAsArg, FunctionCalls, VisitedValues);
-          // memoryLocationIsSuitableForPA(*ValueAsArg, *PassedToFunction, BaseModule);
+          // errs() << "Since Value " << V << " was passed to function " << PassedToFunction->getName() << " we need to recursively follow that function\n";
+          // findAllFunctionsWhereValueIsPassedAsArgumentHelper(*ValueAsArg, FunctionCalls, VisitedValues);
+
+          // TODO: This is DFS, moving this to a second for loop would make it BFS, which might be more efficient in our case.
+          // TODO: actually, this wouldn't work, since we would also check valuecomesfromelsewhere, which would always be true, since it is the parameter
+
+          // The reason we have to thoroughly analyze the Value passed to the
+          // Function is that it might again have aliases inside that function,
+          // which we would not detect with just a recursive call to
+          // findAllFunctionsWhereValueIsPassedAsArgumentHelper.
+          // if (!memoryLocationIsSuitableForPA(*ValueAsArg, *PassedToFunction, BaseModule)) {
+          if (!valueHasOtherUsesWithAA(*ValueAsArg, *PassedToFunction, BaseModule)) {
+            errs() << "This will always be not suitable since it's the argument of the function. part 2\n";
+            return false;
+          }
 
           // Continue iterating over parameters even if we found our Value,
           // since the same Value could be passed multiple times to the
@@ -254,26 +261,51 @@ void findAllFunctionsWhereValueIsPassedAsArgumentHelper(Value &V, SmallVector<Fu
       }
     }
     // Also add all other functions that use the function's return value
-    findAllFunctionsWhereValueIsPassedAsArgumentHelper(*U, FunctionCalls, VisitedValues);
+    if (!findAllFunctionsWhereValueIsPassedAsArgumentHelper(*U, FunctionCalls, VisitedValues, BaseModule)) {
+      return false;
+    }
   }
+
+  return true;
+}
+
+void printSmallVector(const llvm::SmallVectorImpl<Function*> &vec) {
+    for (const auto &item : vec) {
+        llvm::errs() << item->getName() << " ";
+    }
+    llvm::errs() << "\n";
 }
 
 // Find all function calls that use the specified value as an argument.
 // Once we found a function, we also have to recursively find all of
 // the functions that use that function('s return value).
-void findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<Function*, 8> &FunctionCalls) {
+// Additionally, returns false if we directly find some function we could
+// not analyze further, and therefore classify as external.
+bool findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<Function*, 8> &FunctionCalls, Module &BaseModule) {
   std::set<Value*> VisitedValues;
-  return findAllFunctionsWhereValueIsPassedAsArgumentHelper(V, FunctionCalls, VisitedValues);
+  // return findAllFunctionsWhereValueIsPassedAsArgumentHelper(V, FunctionCalls, VisitedValues, BaseModule);
+  auto boolean = findAllFunctionsWhereValueIsPassedAsArgumentHelper(V, FunctionCalls, VisitedValues, BaseModule);
+  if (FunctionCalls.size() != 0) {
+    errs() << "found all functions where value is passed as arg: Val: " << V << "\n";
+    printSmallVector(FunctionCalls);
+  }
+  return boolean;
 }
 
 // TODO: discuss depth first search (what we do) vs breadth first search in thesis
+
 // A value has other uses if it is recursively passed as a function parameter
 // to an external function.
 // Therefore, once we see that a value is passed to a non-external function,
 // we still need to check if the value has other uses in in that function.
-bool valueHasOtherUses(Value &Value, Function &F, Module &BaseModule) {
+// This function does not perform any Alias Analysis.
+bool valueHasOtherUsesWithoutAA(Value &Value, Function &F, Module &BaseModule) {
   SmallVector<Function*, 8> FunctionsUsingValue;
-  findAllFunctionsWhereValueIsPassedAsArgument(Value, FunctionsUsingValue);
+  if (!findAllFunctionsWhereValueIsPassedAsArgument(Value, FunctionsUsingValue, BaseModule)) {
+    // While searching for the functions, we already encountered some
+    // error/invalid function that uses the Value, so we immediately return.
+    return true;
+  }
 
   // TODO: !functionsOutsideModuleUsingPointer.empty() vs assert that all functionsUsingPointer are from this module
   for (auto FunctionUsingValue: FunctionsUsingValue) {
@@ -281,17 +313,30 @@ bool valueHasOtherUses(Value &Value, Function &F, Module &BaseModule) {
     if (isExternalFunction(*FunctionUsingValue, BaseModule)) {
       return true;
     }
-
-    // TODO: This is DFS, moving this to a second for loop would make it BFS, which might be more efficient in our case.
-    // if (valueHasOtherUses(Value, *FunctionUsingValue, BaseModule)) {
-    //   return true;
-    // }
   }
 
   // TODO: optimization: don't find all functions, just the first one that is 
   // // TODO: !functionsOutsideModuleUsingPointer.empty() vs assert that all functionsUsingPointer are from this module
 
   return false;
+}
+
+// This is used instead of the WithoutAA variant when Alias Analysis is
+// required, but valueComesFromElsewhere should not be bundled in.
+bool valueHasOtherUsesWithAA(Value &V, Function &F, Module &BaseModule) {
+  SmallVector<Value*, 8> Aliases;
+  findAllAliasesOfValue(V, Aliases, F);
+
+  // TODO: optimization possibility: cache the aliases that were already found to be non-suitable
+  // If any of the aliases are not suitable, then all of the aliases should be not suitable
+  for (auto Alias : Aliases) {
+    if (valueHasOtherUsesWithoutAA(*Alias, F, BaseModule)) {
+      // errs() << "This will always be not suitable since it's the argument of the function. part 1\n";
+      return false;
+    }
+  }
+
+  return true;
 }
 
 // Checks whether the value is a parameter of a function.
@@ -307,7 +352,7 @@ bool valueIsParameterOfFunction(Value &V, Function &F) {
 // Tracks all visited values, and skips recursive call if we have already
 // visited a certain value before (to avoid endless recursion).
 bool valueComesFromElsewhereHelper(Value &V, Function &ParentFunction, std::set<Value*> &VisitedValues) {
-  errs() << "Checking value: " << V.getName().str() << "\n";
+  // errs() << "Checking value: " << V.getName().str() << "\n";
 
   auto [_, ValueWasInserted] = VisitedValues.insert(&V);
   if (!ValueWasInserted) {
@@ -332,7 +377,8 @@ bool valueComesFromElsewhereHelper(Value &V, Function &ParentFunction, std::set<
   if (auto *I = dyn_cast<Instruction>(&V)) {
     // Check if instruction is (directly) the return value of a function call.
     // TODO: check for superclass CallBase instead
-    if (isa<CallInst>(I)) {
+    // if (isa<CallInst>(I)) {
+    if (isa<CallBase>(I)) {
       errs() << "Instruction: " << I << " is the return value of a function call\n";
       return true;
     }
@@ -356,15 +402,6 @@ bool valueComesFromElsewhereHelper(Value &V, Function &ParentFunction, std::set<
 }
 
 // TODO: adapted for analysis over entire module
-// Checks whether a value "comes from elsewhere".
-// A value comes from elsewhere if any of the following conditions are met:
-// 1. The value was passed as a parameter to the current function.
-// 2. The value is the return value of any function.
-// 3. The value was loaded from any memory location.
-// 4. The value is a global value.
-// In case the current value/instruction does not come from elsewhere, we also
-// need to check whether any of its operands come from elsewhere.
-
 // Checks whether a value "comes from elsewhere".
 // A value comes from elsewhere if any of the following conditions are met:
 // 1. The value was passed as a parameter to the current function.
@@ -399,7 +436,8 @@ bool memoryLocationIsSuitableForPA(Value &MemoryLocation, Function &F, Module &B
   // TODO: optimization possibility: cache the aliases that were already found to be non-suitable
   // If any of the aliases are not suitable, then all of the aliases should be not suitable
   for (auto Alias : Aliases) {
-    if (valueHasOtherUses(*Alias, F, BaseModule) || valueComesFromElsewhere(*Alias, F)) {
+    if (valueHasOtherUsesWithoutAA(*Alias, F, BaseModule) || valueComesFromElsewhere(*Alias, F)) {
+      errs() << "This will always be not suitable since it's the argument of the function. part 1\n";
       return false;
     }
   }
@@ -407,57 +445,11 @@ bool memoryLocationIsSuitableForPA(Value &MemoryLocation, Function &F, Module &B
   return true;
 }
 
-// Go through all load and stores of pointers and check if they are suitable for
-// pointer authentication.
-bool authenticateStoredAndLoadedPointers(Function &F, Module &BaseModule) {
+void insertPACInstructions(SmallVector<StoreInst*, 8> &StorePointerInsts, SmallVector<LoadInst*, 8> &LoadPointerInsts, Function &F) {
   auto *PointerSignFunc = Intrinsic::getDeclaration(
       F.getParent(), Intrinsic::wasm_pointer_sign);
   auto *PointerAuthFunc = Intrinsic::getDeclaration(
       F.getParent(), Intrinsic::wasm_pointer_auth);
-
-  SmallVector<StoreInst*, 8> StorePointerInsts;
-  SmallVector<LoadInst*, 8> LoadPointerInsts;
-
-  // Look for instructions that load/store a pointer
-  for (BasicBlock &BB : F) {
-    for (Instruction &I : BB) {
-      if (StoreInst *SI = dyn_cast<StoreInst>(&I)) {
-        // Store(value, ptr): $value is stored at data address pointed to by $ptr
-        // Check if value to be stored in memory is a pointer
-        Value *PointerValueToStore = SI->getValueOperand();
-        if (PointerValueToStore->getType()->isPointerTy()) {
-          auto MemoryLocation = SI->getPointerOperand();
-          errs() << "==== Checking if store: " << SI->getName().str() << " is suitable for PA\n";
-
-          if (memoryLocationIsSuitableForPA(*MemoryLocation, F, BaseModule)) {
-            errs() << "Store instruction: " << SI << " is suitable for pointer authentication\n";
-            // We shouldn't mutate the instructions we are iterating over
-            StorePointerInsts.emplace_back(SI);
-          } else {
-            errs() << "Store instruction: " << SI << " is not suitable for pointer authentication\n";
-          }
-        }
-      } else
-      if (LoadInst *LI = dyn_cast<LoadInst>(&I)) {
-        // Load(ptr): The data value located at the memory address pointed to by $ptr is returned
-        // Check if value to be loaded from memory is a pointer
-        if (LI->getType()->isPointerTy()) {
-          auto MemoryLocation = LI->getPointerOperand();
-          errs() << "==== Checking if load: " << LI->getName().str() << " is suitable for PA\n";
-
-          if (memoryLocationIsSuitableForPA(*MemoryLocation, F, BaseModule)) {
-            errs() << "Load instruction: " << LI << " is suitable for pointer authentication\n";
-            // std::cout << "Load instruction: " << LI->getName().str() << " is suitable for pointer authentication\n";
-            // We shouldn't mutate the instructions we are iterating over
-            LoadPointerInsts.emplace_back(LI);
-          } else {
-            errs() << "Load instruction: " << LI << " is not suitable for pointer authentication\n";
-            // std::cout << "Load instruction: " << LI->getName().str() << " is not suitable for pointer authentication\n";
-          }
-        }
-      }
-    }
-  }
 
   // Add pointer signing inst before pointer store inst
   for (auto SI : StorePointerInsts) {
@@ -480,9 +472,51 @@ bool authenticateStoredAndLoadedPointers(Function &F, Module &BaseModule) {
       return U.getUser() != PointerAuthInst;
     });
   }
+}
 
-  // if (F.getName() == "__original_"
-  F.dump();
+// Go through all load and stores of pointers and insert them into respective
+// vector if they are suitable for pointer authentication.
+bool authenticateStoredAndLoadedPointers(Function &F, Module &BaseModule, SmallVector<StoreInst*, 8> &StorePointerInsts, SmallVector<LoadInst*, 8> &LoadPointerInsts) {
+  // Look for instructions that load/store a pointer
+  for (BasicBlock &BB : F) {
+    for (Instruction &I : BB) {
+      if (StoreInst *SI = dyn_cast<StoreInst>(&I)) {
+        // Store(value, ptr): $value is stored at data address pointed to by $ptr
+        // Check if value to be stored in memory is a pointer
+        Value *PointerValueToStore = SI->getValueOperand();
+        if (PointerValueToStore->getType()->isPointerTy()) {
+          auto MemoryLocation = SI->getPointerOperand();
+          // errs() << "==== Checking if store: " << SI->getName().str() << " is suitable for PA\n";
+
+          if (memoryLocationIsSuitableForPA(*MemoryLocation, F, BaseModule)) {
+            errs() << "Store instruction: " << SI << " is suitable for pointer authentication\n";
+            // We shouldn't mutate the instructions we are iterating over
+            StorePointerInsts.emplace_back(SI);
+          } else {
+            errs() << "Store instruction: " << SI << " is not suitable for pointer authentication\n";
+          }
+        }
+      } else
+      if (LoadInst *LI = dyn_cast<LoadInst>(&I)) {
+        // Load(ptr): The data value located at the memory address pointed to by $ptr is returned
+        // Check if value to be loaded from memory is a pointer
+        if (LI->getType()->isPointerTy()) {
+          auto MemoryLocation = LI->getPointerOperand();
+          // errs() << "==== Checking if load: " << LI->getName().str() << " is suitable for PA\n";
+
+          if (memoryLocationIsSuitableForPA(*MemoryLocation, F, BaseModule)) {
+            errs() << "Load instruction: " << LI << " is suitable for pointer authentication\n";
+            // std::cout << "Load instruction: " << LI->getName().str() << " is suitable for pointer authentication\n";
+            // We shouldn't mutate the instructions we are iterating over
+            LoadPointerInsts.emplace_back(LI);
+          } else {
+            errs() << "Load instruction: " << LI << " is not suitable for pointer authentication\n";
+            // std::cout << "Load instruction: " << LI->getName().str() << " is not suitable for pointer authentication\n";
+          }
+        }
+      }
+    }
+  }
 
   // We made changes if we added any pointer sign or auth instructions.
   bool modified = !(LoadPointerInsts.empty() && StorePointerInsts.empty());
@@ -492,23 +526,42 @@ bool authenticateStoredAndLoadedPointers(Function &F, Module &BaseModule) {
 
 bool WebAssemblyPointerAuthenticationModule::runOnModule(Module &M) {
   bool modified = false;
-  for (Function &F : M) {
-    errs() << "=== Starting analysis on function: " << F.getName().str() << "\n";
-    // if (F.getName() != "__original_main") {
-    //   return false;
-    // }
 
-    // TODO: we have to only insert the new instructions at the end of the module pass
-    if (authenticateStoredAndLoadedPointers(F, M)) {
+  // We only want to insert the new pointer sign and auth instructions after
+  // the analysis of all functions.
+  std::map<Function*, std::pair<SmallVector<StoreInst*, 8>, SmallVector<LoadInst*, 8>>> functionPointerMap;
+
+  for (Function &F : M) {
+    errs() << "======= Checking function: " << F.getName() << "\n";
+
+    SmallVector<StoreInst*, 8> storeList;
+    SmallVector<LoadInst*, 8> loadList;
+
+    if (authenticateStoredAndLoadedPointers(F, M, storeList, loadList)) {
+      // Collect suitable Stores and Loads into vectors
+      functionPointerMap[&F] = std::make_pair(storeList, loadList);
       modified = true;
     }
   }
+
+  // Actually insert the new pointer authentication instructions
+  for (auto &[F, vectors] : functionPointerMap) {
+    auto &[storeList, loadList] = vectors;
+    insertPACInstructions(storeList, loadList, *F);
+  }
+
+  for (Function &F : M) {
+    // if (F.getName() == "__original_"
+    errs() << "------ Printing altered function: " << F.getName() << "\n";
+    F.dump();
+  }
+
+  // TODO: potentially set to false in the future
 
   // No changes relevant to other LLVM transformation passes were made.
   // We simply added some instructions other passes are unaware of anyways.
   // However, to be on the safe side, we will still indicate that the function
   // was modified.
-  // TODO: potentially set to false in the future
   return modified;
 }
 

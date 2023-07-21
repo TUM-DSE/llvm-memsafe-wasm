@@ -371,16 +371,18 @@ bool authenticateStoredAndLoadedPointers(Function &F, AliasAnalysis &AA) {
 
 bool WebAssemblyPointerAuthenticationFunction::runOnFunction(Function &F) {
   errs() << "=== Starting analysis on function: " << F.getName().str() << "\n";
-  if (F.getName() != "__original_main") {
-    return false;
-  }
+  // if (F.getName() != "__original_main") {
+  //   return false;
+  // }
 
   AliasAnalysis &AA = getAnalysis<AAResultsWrapperPass>().getAAResults();
 
   // TODO: use the return value somehow, or remove it
   bool modified = authenticateStoredAndLoadedPointers(F, AA);
 
-  F.dump();
+  // if (F.getName().contains("main")) {
+    F.dump();
+  // }
 
   // No changes relevant to other LLVM transformation passes were made.
   // We simply added some instructions other passes are unaware of anyways.
