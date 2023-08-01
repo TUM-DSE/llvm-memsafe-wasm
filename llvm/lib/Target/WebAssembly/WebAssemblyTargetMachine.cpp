@@ -85,6 +85,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeWebAssemblyTarget() {
   initializeWebAssemblyLowerRefTypesIntPtrConvPass(PR);
   initializeWebAssemblyFixBrTableDefaultsPass(PR);
   initializeWebAssemblyDAGToDAGISelPass(PR);
+  initializeWebAssemblyPointerAuthenticationFunctionPass(PR);
 }
 
 //===----------------------------------------------------------------------===//
@@ -462,8 +463,11 @@ void WebAssemblyPassConfig::addIRPasses() {
   // Expand indirectbr instructions to switches.
   addPass(createIndirectBrExpandPass());
 
-  addPass(
-      createWebAssemblyMemorySafetyPass(TM->getOptLevel() == CodeGenOpt::None));
+  // addPass(
+  //     createWebAssemblyMemorySafetyPass(TM->getOptLevel() == CodeGenOpt::None));
+
+  // addPass(createWebAssemblyPointerAuthenticationFunctionPass());
+  addPass(createWebAssemblyPointerAuthenticationModulePass());
 
   TargetPassConfig::addIRPasses();
 }

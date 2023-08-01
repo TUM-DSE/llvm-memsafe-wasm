@@ -208,6 +208,22 @@ defm SEGMENT_STACK_FREE_A64 : I<(outs),
                                 "segment.stack_free\t${off}(${addr})${p2align}, $sp, $size", "segment.stack_free\t${off}${p2align}",
                                 0xfa03, false>,
                         Requires<[HasAddr64]>; // HasMemSafety
+
+defm POINTER_SIGN_A64 : I<(outs I64:$signed_ptr),
+                          (ins I64:$ptr),
+                          (outs), (ins),
+                          [],
+                          "i64.pointer_sign\t$signed_ptr, $ptr", "i64.pointer_sign",
+                          0xfa04, false>,
+                        Requires<[HasAddr64]>; // HasMemSafety
+
+defm POINTER_AUTH_A64 : I<(outs I64:$authed_ptr),
+                          (ins I64:$ptr),
+                          (outs), (ins),
+                          [],
+                          "i64.pointer_auth\t$authed_ptr, $ptr", "i64.pointer_auth",
+                          0xfa05, false>,
+                        Requires<[HasAddr64]>; // HasMemSafety
 }
 
 def : Pat<(int_wasm_segment_new I64:$size),
@@ -218,6 +234,10 @@ def : Pat<(int_wasm_segment_stack_new (AddrOps64 offset64_op:$offset, I64:$addr)
           (!cast<NI>(SEGMENT_STACK_NEW_A64) 0, offset64_op:$offset, I64:$addr, I64:$size)>;
 def : Pat<(int_wasm_segment_stack_free (AddrOps64 offset64_op:$offset, I64:$addr), I64:$sp, I64:$size),
           (!cast<NI>(SEGMENT_STACK_FREE_A64) 0, offset64_op:$offset, I64:$addr, I64:$sp, I64:$size)>;
+def : Pat<(int_wasm_pointer_sign I64:$ptr),
+          (!cast<NI>(POINTER_SIGN_A64) I64:$ptr)>;
+def : Pat<(int_wasm_pointer_auth I64:$ptr),
+          (!cast<NI>(POINTER_AUTH_A64) I64:$ptr)>;
 
 
 multiclass MemoryOps<WebAssemblyRegClass rc, string B> {

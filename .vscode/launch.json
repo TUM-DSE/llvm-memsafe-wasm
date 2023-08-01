@@ -33,13 +33,13 @@
                 "-resource-dir",
                 "./build/lib/clang/17",
                 "-isysroot",
-                "../wasi-libc/sysroot",
+                "/scratch/martin/src/wasm/wasi-libc/sysroot",
                 "-internal-isystem",
                 "./build/lib/clang/17/include",
                 "-internal-isystem",
-                "../wasi-libc/sysroot/include/wasm64-wasi",
+                "/scratch/martin/src/wasm/wasi-libc/sysroot/include/wasm64-wasi",
                 "-internal-isystem",
-                "../wasi-libc/sysroot/include",
+                "/scratch/martin/src/wasm/wasi-libc/sysroot/include",
                 "-Os",
                 "-ferror-limit",
                 "19",
@@ -135,7 +135,7 @@
             "command": "extension.commandvariable.file.pickFile",
             "args": {
                 "fromFolder": {
-                    "fixed": "/scratch/martin/src/wasm/hello-world"
+                    "fixed": "/scratch/fritz/src/safe-wasm/llvm-project/demo"
                 },
                 "include": "**/*.c"
             }

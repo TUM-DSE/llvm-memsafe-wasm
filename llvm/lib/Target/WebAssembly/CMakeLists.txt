@@ -52,6 +52,8 @@ add_llvm_target(WebAssemblyCodeGen
   WebAssemblySelectionDAGInfo.cpp
   WebAssemblySetP2AlignOperands.cpp
   WebAssemblyMemorySafety.cpp
+  WebAssemblyPointerAuthenticationFunctionPass.cpp
+  WebAssemblyPointerAuthenticationModulePass.cpp
   WebAssemblySortRegion.cpp
   WebAssemblyMemIntrinsicResults.cpp
   WebAssemblySubtarget.cpp
