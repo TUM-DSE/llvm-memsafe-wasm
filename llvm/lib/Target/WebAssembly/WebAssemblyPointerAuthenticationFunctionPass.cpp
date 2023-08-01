@@ -192,6 +192,7 @@ bool valueHasOtherUses(Value &V, Function &F, AliasAnalysis &AA) {
   SmallVector<Function*, 8> functionsUsingValue;
   findAllFunctionsWhereValueIsPassedAsArgument(V, functionsUsingValue);
 
+  // TODO: major optimization: we don't need to construct the entire list of all recursive functions, we basically just need to find if there are **any**, so we can immediately return once we found the first function that takes as parameter.
   return !functionsUsingValue.empty();
 }
 
