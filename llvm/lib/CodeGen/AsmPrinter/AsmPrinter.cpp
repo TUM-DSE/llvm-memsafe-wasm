@@ -1494,6 +1494,7 @@ void AsmPrinter::emitPCSections(const MachineFunction &MF) {
     return;
 
   const CodeModel::Model CM = MF.getTarget().getCodeModel();
+  auto ObjectFormat = MF.getTarget().getTargetTriple().getObjectFormat();
   const unsigned RelativeRelocSize =
       (CM == CodeModel::Medium || CM == CodeModel::Large) ? getPointerSize()
                                                           : 4;
@@ -1531,24 +1532,35 @@ void AsmPrinter::emitPCSections(const MachineFunction &MF) {
           assert((O == '!' || O == 'C') && "Invalid !pcsections options");
 #endif
         SwitchSection(Sec);
-        const MCSymbol *Prev = Syms.front();
-        for (const MCSymbol *Sym : Syms) {
-          if (Sym == Prev || !Deltas) {
-            // Use the entry itself as the base of the relative offset.
-            MCSymbol *Base = MF.getContext().createTempSymbol("pcsection_base");
-            OutStreamer->emitLabel(Base);
-            // Emit relative relocation `addr - base`, which avoids a dynamic
-            // relocation in the final binary. User will get the address with
-            // `base + addr`.
-            emitLabelDifference(Sym, Base, RelativeRelocSize);
-          } else {
-            // Emit delta between symbol and previous symbol.
-            if (ConstULEB128)
-              emitLabelDifferenceAsULEB128(Sym, Prev);
-            else
-              emitLabelDifference(Sym, Prev, 4);
+
+        if (ObjectFormat == Triple::ObjectFormatType::ELF) {
+          const MCSymbol *Prev = Syms.front();
+          for (const MCSymbol *Sym : Syms) {
+            if (Sym == Prev || !Deltas) {
+              // Use the entry itself as the base of the relative offset.
+              MCSymbol *Base =
+                  MF.getContext().createTempSymbol("pcsection_base");
+              OutStreamer->emitLabel(Base);
+              // Emit relative relocation `addr - base`, which avoids a dynamic
+              // relocation in the final binary. User will get the address with
+              // `base + addr`.
+              emitLabelDifference(Sym, Base, RelativeRelocSize);
+            } else {
+              // Emit delta between symbol and previous symbol.
+              if (ConstULEB128)
+                emitLabelDifferenceAsULEB128(Sym, Prev);
+              else
+                emitLabelDifference(Sym, Prev, 4);
+            }
+            Prev = Sym;
           }
-          Prev = Sym;
+        } else if (ObjectFormat == Triple::ObjectFormatType::Wasm) {
+          for (const MCSymbol *Sym : Syms) {
+            // There is no dynamic relocation in WASM, so we can directly emit the symbol value
+            OutStreamer->emitSymbolValue(Sym, RelativeRelocSize);
+          }
+        } else {
+          assert(false && "Emitting pcsections is only supported for ELF and Wasm objects.");
         }
       } else {
         // Emit auxiliary data after PC.
