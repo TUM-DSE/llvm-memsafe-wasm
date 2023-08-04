@@ -86,6 +86,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeWebAssemblyTarget() {
   initializeWebAssemblyFixBrTableDefaultsPass(PR);
   initializeWebAssemblyDAGToDAGISelPass(PR);
   initializeWebAssemblyMemorySafetyPass(PR);
+  initializeWebAssemblyMemorySafetyCustomSectionPassPass(PR);
 }
 
 //===----------------------------------------------------------------------===//
@@ -608,6 +609,8 @@ void WebAssemblyPassConfig::addPreEmitPass() {
 
   // Collect information to prepare for MC lowering / asm printing.
   addPass(createWebAssemblyMCLowerPrePass());
+
+  addPass(createWebAssemblyMemorySafetyCustomSectionPass());
 }
 
 bool WebAssemblyPassConfig::addPreISel() {
