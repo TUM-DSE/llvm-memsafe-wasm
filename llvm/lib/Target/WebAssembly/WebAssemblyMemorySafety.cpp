@@ -377,7 +377,7 @@ INITIALIZE_PASS_BEGIN(WebAssemblyMemorySafety, DEBUG_TYPE,
 INITIALIZE_PASS_END(WebAssemblyMemorySafety, DEBUG_TYPE,
                     "WebAssembly Memory Safety", false, false)
 
-FunctionPass *llvm::createWebAssemblyMemorySafetyPass(bool IsOptNone) {
+FunctionPass *llvm::createWebAssemblyMemorySafetyPass() {
   return new WebAssemblyMemorySafety();
 }
 
