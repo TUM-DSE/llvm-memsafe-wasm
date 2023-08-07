@@ -261,6 +261,14 @@ inline unsigned GetDefaultP2AlignAny(unsigned Opc) {
   WASM_LOAD_STORE(LOAD_ZERO_I64x2)
   WASM_LOAD_STORE(LOAD_LANE_I64x2)
   WASM_LOAD_STORE(STORE_LANE_I64x2)
+  case WebAssembly::SEGMENT_NEW_A64:
+  case WebAssembly::SEGMENT_NEW_A64_S:
+  case WebAssembly::SEGMENT_FREE_A64:
+  case WebAssembly::SEGMENT_FREE_A64_S:
+  case WebAssembly::SEGMENT_STACK_NEW_A64:
+  case WebAssembly::SEGMENT_STACK_NEW_A64_S:
+  case WebAssembly::SEGMENT_STACK_FREE_A64:
+  case WebAssembly::SEGMENT_STACK_FREE_A64_S:
   return 3;
   WASM_LOAD_STORE(LOAD_V128)
   WASM_LOAD_STORE(STORE_V128)
