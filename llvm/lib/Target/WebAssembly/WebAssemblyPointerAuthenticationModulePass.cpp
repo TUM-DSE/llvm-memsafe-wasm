@@ -131,12 +131,12 @@ bool isExternalFunction(Function &F, Module &ParentModule) {
   // Sanity check: If the function belongs to a different module than the
   // one we are currently analyzing, then it is definitely an external function.
   if (F.getParent() != &ParentModule) {
-    errs() << "Found external function from a different module: " << F.getName() << "\n";
+    // errs() << "Found external function from a different module: " << F.getName() << "\n";
     return true;
   }
 
   if (F.isDeclaration() && !F.isIntrinsic()) {
-    errs() << "Found external function: " << F.getName() << "\n";
+    // errs() << "Found external function: " << F.getName() << "\n";
     // std::cout << "==== From the base function: " << BaseFunction.getName().str() << " Function \"" << F.getName().str() << "\" is an external function." << std::endl;
     // Check if the function has any external linkage
     // if (F.hasExternalLinkage() || F.hasAvailableExternallyLinkage()) {
@@ -183,12 +183,12 @@ void findAllAliasesOfValue(Value &V, SmallVector<Value*, 8> &Aliases, Function &
 // Tracks all visited values, and skips recursive call if we have already
 // visited a certain value before (to avoid endless recursion).
 // If we encounter an unidentifiable function (e.g. function pointer,
-// vararg function, then we immediately return false.
+// vararg function), then we immediately return false.
 bool findAllFunctionsWhereValueIsPassedAsArgumentHelper(Value &V, SmallVector<Function*, 8> &FunctionCalls, std::set<Value*> &VisitedValues, Module &BaseModule) {
   // TODO: what about aliases? Are their users transitively counted as users as well? TEST this!!!
   auto [_, ValueWasInserted] = VisitedValues.insert(&V);
   if (!ValueWasInserted) {
-    errs() << "in find all functions where passed as param: Found value we have seen before: " << V.getName().str() << "; exiting to prevent infinite loop\n";
+    // errs() << "in find all functions where passed as param: Found value we have seen before: " << V.getName().str() << "; exiting to prevent infinite loop\n";
     // We found a value we have seen before, so were are in some sort of loop.
     // Therefore, we have already checked this value and all of its users.
     // We want to continue searching, so don't mark this as an error.
@@ -218,7 +218,7 @@ bool findAllFunctionsWhereValueIsPassedAsArgumentHelper(Value &V, SmallVector<Fu
           // function pointers further, so we are conservative and mark this
           // as potentially calling external functions.
           if (PassedToFunction == nullptr || PassedToFunction->arg_size() <= ArgIndex) {
-            errs() << "We found a function that takes as value but we don't want to handle: " << PassedToFunction->getName() << "\n";
+            // errs() << "We found a function that takes as value but we don't want to handle: " << PassedToFunction->getName() << "\n";
             return false;
           }
 
@@ -248,7 +248,7 @@ bool findAllFunctionsWhereValueIsPassedAsArgumentHelper(Value &V, SmallVector<Fu
           // findAllFunctionsWhereValueIsPassedAsArgumentHelper.
           // if (!memoryLocationIsSuitableForPA(*ValueAsArg, *PassedToFunction, BaseModule)) {
           if (!valueHasOtherUsesWithAA(*ValueAsArg, *PassedToFunction, BaseModule)) {
-            errs() << "This will always be not suitable since it's the argument of the function. part 2\n";
+            // errs() << "This will always be not suitable since it's the argument of the function. part 2\n";
             return false;
           }
 
@@ -271,9 +271,9 @@ bool findAllFunctionsWhereValueIsPassedAsArgumentHelper(Value &V, SmallVector<Fu
 
 void printSmallVector(const llvm::SmallVectorImpl<Function*> &vec) {
     for (const auto &item : vec) {
-        llvm::errs() << item->getName() << " ";
+        // llvm::errs() << item->getName() << " ";
     }
-    llvm::errs() << "\n";
+    // llvm::errs() << "\n";
 }
 
 // Find all function calls that use the specified value as an argument.
@@ -286,7 +286,7 @@ bool findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<Function
   // return findAllFunctionsWhereValueIsPassedAsArgumentHelper(V, FunctionCalls, VisitedValues, BaseModule);
   auto boolean = findAllFunctionsWhereValueIsPassedAsArgumentHelper(V, FunctionCalls, VisitedValues, BaseModule);
   if (FunctionCalls.size() != 0) {
-    errs() << "found all functions where value is passed as arg: Val: " << V << "\n";
+    // errs() << "found all functions where value is passed as arg: Val: " << V << "\n";
     printSmallVector(FunctionCalls);
   }
   return boolean;
@@ -358,18 +358,18 @@ bool valueComesFromElsewhereHelper(Value &V, Function &ParentFunction, std::set<
   if (!ValueWasInserted) {
     // We found a value we have seen before, so were are in some sort of loop.
     // Therefore, we continue searching, but skip re-entering the loop.
-    errs() << "Found value we have seen before: " << V.getName().str() << "; exiting to prevent infinite loop\n";
+    // errs() << "Found value we have seen before: " << V.getName().str() << "; exiting to prevent infinite loop\n";
     return false;
   }
 
   if (valueIsParameterOfFunction(V, ParentFunction)) {
-    errs() << "Value: " << V.getName().str() << " is the parameter of function: " << ParentFunction.getName() << "\n";
+    // errs() << "Value: " << V.getName().str() << " is the parameter of function: " << ParentFunction.getName() << "\n";
     return true;
   }
 
   // A global value could be used across different modules, so we can never control/know that global values aren't used elsewhere
   if (isa<GlobalValue>(&V)) {
-    errs() << "Value: " << V.getName().str() << " is a global value\n";
+    // errs() << "Value: " << V.getName().str() << " is a global value\n";
     return true;
   }
 
@@ -379,7 +379,7 @@ bool valueComesFromElsewhereHelper(Value &V, Function &ParentFunction, std::set<
     // TODO: check for superclass CallBase instead
     // if (isa<CallInst>(I)) {
     if (isa<CallBase>(I)) {
-      errs() << "Instruction: " << I << " is the return value of a function call\n";
+      // errs() << "Instruction: " << I << " is the return value of a function call\n";
       return true;
     }
     // Check if value was loaded from a memory location, i.e. value is the
@@ -437,7 +437,7 @@ bool memoryLocationIsSuitableForPA(Value &MemoryLocation, Function &F, Module &B
   // If any of the aliases are not suitable, then all of the aliases should be not suitable
   for (auto Alias : Aliases) {
     if (valueHasOtherUsesWithoutAA(*Alias, F, BaseModule) || valueComesFromElsewhere(*Alias, F)) {
-      errs() << "This will always be not suitable since it's the argument of the function. part 1\n";
+      // errs() << "This will always be not suitable since it's the argument of the function. part 1\n";
       return false;
     }
   }
@@ -489,11 +489,11 @@ bool authenticateStoredAndLoadedPointers(Function &F, Module &BaseModule, SmallV
           // errs() << "==== Checking if store: " << SI->getName().str() << " is suitable for PA\n";
 
           if (memoryLocationIsSuitableForPA(*MemoryLocation, F, BaseModule)) {
-            errs() << "Store instruction: " << SI << " is suitable for pointer authentication\n";
+            // errs() << "Store instruction: " << SI << " is suitable for pointer authentication\n";
             // We shouldn't mutate the instructions we are iterating over
             StorePointerInsts.emplace_back(SI);
           } else {
-            errs() << "Store instruction: " << SI << " is not suitable for pointer authentication\n";
+            // errs() << "Store instruction: " << SI << " is not suitable for pointer authentication\n";
           }
         }
       } else
@@ -505,12 +505,12 @@ bool authenticateStoredAndLoadedPointers(Function &F, Module &BaseModule, SmallV
           // errs() << "==== Checking if load: " << LI->getName().str() << " is suitable for PA\n";
 
           if (memoryLocationIsSuitableForPA(*MemoryLocation, F, BaseModule)) {
-            errs() << "Load instruction: " << LI << " is suitable for pointer authentication\n";
+            // errs() << "Load instruction: " << LI << " is suitable for pointer authentication\n";
             // std::cout << "Load instruction: " << LI->getName().str() << " is suitable for pointer authentication\n";
             // We shouldn't mutate the instructions we are iterating over
             LoadPointerInsts.emplace_back(LI);
           } else {
-            errs() << "Load instruction: " << LI << " is not suitable for pointer authentication\n";
+            // errs() << "Load instruction: " << LI << " is not suitable for pointer authentication\n";
             // std::cout << "Load instruction: " << LI->getName().str() << " is not suitable for pointer authentication\n";
           }
         }
@@ -532,7 +532,7 @@ bool WebAssemblyPointerAuthenticationModule::runOnModule(Module &M) {
   std::map<Function*, std::pair<SmallVector<StoreInst*, 8>, SmallVector<LoadInst*, 8>>> functionPointerMap;
 
   for (Function &F : M) {
-    errs() << "======= Checking function: " << F.getName() << "\n";
+    // errs() << "======= Checking function: " << F.getName() << "\n";
 
     SmallVector<StoreInst*, 8> storeList;
     SmallVector<LoadInst*, 8> loadList;
@@ -552,7 +552,7 @@ bool WebAssemblyPointerAuthenticationModule::runOnModule(Module &M) {
 
   for (Function &F : M) {
     // if (F.getName() == "__original_"
-    errs() << "------ Printing altered function: " << F.getName() << "\n";
+    // errs() << "------ Printing altered function: " << F.getName() << "\n";
     F.dump();
   }
 
