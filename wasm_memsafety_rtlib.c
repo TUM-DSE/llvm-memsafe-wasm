@@ -1,129 +1,71 @@
-#include <stdlib.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 
-#define TABLE_MAX_LOAD 0.75
-
-typedef struct {
-    void *key;
-    size_t size;
-} TableEntry;
-
+#define MTE_ALIGNMENT 16
 
 typedef struct {
-    size_t count;
-    size_t capacity;
-    TableEntry *entries;
-} HashTable;
+  size_t size;
+} AllocMetadata;
 
-static TableEntry *__wasm_memsafety_table_find(TableEntry *entries, size_t capacity, void *ptr) {
-    size_t index = (size_t) ptr % capacity;
-    TableEntry *tombstone = NULL;
-
-    for (;;) {
-        TableEntry *entry = &entries[index];
-
-        if (entry->key == NULL) {
-            if (entry->size == 0) {
-                // found empty entry
-                return tombstone != NULL ? tombstone : entry;
-            } else if (tombstone == NULL) {
-                // found tombstone
-                tombstone = entry;
-            }
-        } else if (entry->key == ptr) {
-            return entry;
-        }
-
-        index = (index + 1) % capacity;
-    }
+/**
+ * Align a value to a given alignment.
+ * @param val
+ * @param align
+ * @return a value that is a multiple of align and greater or equal to val
+ */
+static inline size_t __wasm_memsafety_align(size_t val, size_t align) {
+  return (val + (align - 1)) & (~(align - 1));
 }
 
-static void __wasm_memsafety_table_resize(HashTable *table, size_t capacity) {
-    TableEntry *entries = calloc(capacity, sizeof(TableEntry));
-    for (int i = 0; i < capacity; ++i) {
-        entries[i].key = NULL;
-        entries[i].size = 0;
-    }
-
-    table->count = 0;
-    for (int i = 0; i < table->capacity; ++i) {
-        TableEntry *entry = &table->entries[i];
-        if (entry->key == NULL) {
-            continue;
-        }
-
-        TableEntry *dest = __wasm_memsafety_table_find(entries, capacity, entry->key);
-        dest->key = entry->key;
-        dest->size = entry->size;
-        table->count++;
-    }
-
-    free(table->entries);
-    table->entries = entries;
-    table->capacity = capacity;
+static inline void *__wasm_memsafety_untag_ptr(void *ptr) {
+  return (void *) ((size_t) ptr & 0xF0FFFFFFFFFFFFFF);
 }
 
-static bool __wasm_memsafety_table_set(HashTable *table, void *ptr, size_t size) {
-    if (table->count + 1 > table->capacity * TABLE_MAX_LOAD) {
-        size_t capacity = table->capacity < 8 ? 8 : table->capacity * 2;
-        __wasm_memsafety_table_resize(table, capacity);
-    }
-
-    TableEntry *entry = __wasm_memsafety_table_find(table->entries, table->capacity, ptr);
-    bool isNewKey = entry->key == NULL;
-    if (isNewKey && entry->size == 0) {
-        table->count++;
-    }
-
-    entry->key = ptr;
-    entry->size = size;
-    return isNewKey;
+/**
+ * Get the metadata for a given pointer.
+ * @param ptr the raw pointer given to the user
+ * @return the metadata corresponding to the given pointer
+ */
+static inline AllocMetadata *__wasm_memsafety_metadata(void *ptr) {
+  size_t meta_size = __wasm_memsafety_align(sizeof(AllocMetadata), MTE_ALIGNMENT);
+  return (AllocMetadata *) (ptr - meta_size);
 }
 
-static TableEntry __wasm_memsafety_table_remove(HashTable *table, void *ptr) {
-    if (table->count == 0) {
-        return (TableEntry) {NULL, 0};
-    }
+void *__wasm_memsafety_malloc(size_t size) {
+  size_t meta_size = __wasm_memsafety_align(sizeof(AllocMetadata), MTE_ALIGNMENT);
+  size_t aligned_size = __wasm_memsafety_align(size, MTE_ALIGNMENT);
+  size_t total_size = meta_size + aligned_size;
+  void *mem = aligned_alloc(MTE_ALIGNMENT, total_size);
 
-    TableEntry *entry = __wasm_memsafety_table_find(table->entries, table->capacity, ptr);
-    if (entry->key == NULL) {
-        return (TableEntry) {NULL, 0};
-    }
+  if (!mem) {
+    return NULL;
+  }
 
-    TableEntry result = *entry;
+  void *tagged_mem = mem + meta_size;
+  AllocMetadata *meta = __wasm_memsafety_metadata(tagged_mem);
+  meta->size = total_size;
 
-    // Place a tombstone in the entry
-    entry->key = NULL;
-    entry->size = 1;
+  tagged_mem = __builtin_wasm_segment_new_stack(tagged_mem, aligned_size);
+  fprintf(stderr, "Tagging memory %p, size %zu\n", tagged_mem, aligned_size);
 
-    return result;
-}
-
-static HashTable table = {.capacity = 0, .count = 0, .entries = NULL};
-
-void *__wasm_memsafety_malloc(size_t align, size_t size) {
-    align = align > 16 ? align : 16;
-    size_t aligned_size = (size + (align - 1)) & (~(align - 1));
-    void *mem = aligned_alloc(align, aligned_size);
-    if (mem) {
-        mem = __builtin_wasm_segment_new_stack(mem, aligned_size);
-        fprintf(stderr, "Tagging memory %p, size %zu\n", mem, aligned_size);
-
-        __wasm_memsafety_table_set(&table, mem, aligned_size);
-    }
-
-    return mem;
+  return tagged_mem;
 }
 
 void __wasm_memsafety_free(void *ptr) {
-    TableEntry entry = __wasm_memsafety_table_remove(&table, ptr);
-    if (entry.key != NULL) {
-        fprintf(stderr, "Untagging memory %p, size %zu\n", entry.key, entry.size);
-        __builtin_wasm_segment_free(entry.key, entry.size);
-        void *untagged_ptr = (void *) ((size_t) entry.key & 0xF0FFFFFFFFFFFFFF);
-        free(untagged_ptr);
-    } else {
-        free(ptr);
-    }
+  if (ptr == NULL) {
+    return;
+  }
+
+  // since ptr is tagged, we first need to remove that tag before we access the metadata, since
+  // the metadata is not tagged.
+  AllocMetadata *meta = __wasm_memsafety_metadata(__wasm_memsafety_untag_ptr(ptr));
+  size_t total_size = meta->size;
+  size_t tagged_size = (total_size - __wasm_memsafety_align(sizeof(AllocMetadata), MTE_ALIGNMENT));
+  // the metadata is the beginning of the allocation, so we use that
+  void *mem = (void *) meta;
+
+  fprintf(stderr, "Untagging memory %p, size %zu\n", ptr, tagged_size);
+  __builtin_wasm_segment_free(ptr, tagged_size);
+  free(mem);
 }
