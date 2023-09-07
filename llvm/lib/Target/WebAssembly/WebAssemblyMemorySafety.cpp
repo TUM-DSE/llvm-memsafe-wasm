@@ -21,6 +21,7 @@
 #include "llvm/Analysis/ScalarEvolution.h"
 #include "llvm/Analysis/ScalarEvolutionExpressions.h"
 #include "llvm/Analysis/StackSafetyAnalysis.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/CodeGen/LiveRegUnits.h"
 #include "llvm/CodeGen/MachineBasicBlock.h"
@@ -61,6 +62,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/BuildLibCalls.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/MemoryTaggingSupport.h"
 #include "llvm/Analysis/TargetLibraryInfo.h"
@@ -176,7 +178,14 @@ public:
 private:
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
-    AU.addRequired<TargetLibraryInfoWrapperPass>();
+    AU.addRequiredTransitive<TargetLibraryInfoWrapperPass>();
+  }
+
+  bool isAllocKind(Attribute Attr, AllocFnKind Kind) const {
+    if (!Attr.hasAttribute(Attribute::AllocKind))
+      return false;
+
+    return (Attr.getAllocKind() & Kind) != AllocFnKind::Unknown;
   }
 
   Value *alignAllocSize(Value *AllocSize, Instruction *InsertBefore) {
@@ -255,6 +264,8 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
       F.getName().starts_with("__wasm_memsafety_"))
     return false;
 
+  auto &TLIAnalysis = getAnalysis<TargetLibraryInfoWrapperPass>();
+
   DataLayout DL = F.getParent()->getDataLayout();
   LLVMContext &Ctx(F.getContext());
   TargetLibraryInfo *TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
@@ -275,8 +286,10 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
       }
       if (auto *Call = dyn_cast<CallInst>(&I)) {
         auto *CalledFunction = Call->getCalledFunction();
-        auto Attr = CalledFunction->getFnAttribute(Attribute::AllocKind);
 
+        inferNonMandatoryLibFuncAttrs(CalledFunction->getParent(), CalledFunction->getName(), TLIAnalysis.getTLI(F));
+        
+        auto Attr = CalledFunction->getFnAttribute(Attribute::AllocKind);
         if (Attr.hasAttribute(Attribute::AllocKind)) {
           // Flatten the AllocKind so we can check if we want to/can replace
           // this with our "__wasm_memsafety_" wrappers.
@@ -470,7 +483,7 @@ INITIALIZE_PASS_BEGIN(WebAssemblyMemorySafety, DEBUG_TYPE,
 INITIALIZE_PASS_END(WebAssemblyMemorySafety, DEBUG_TYPE,
                     "WebAssembly Memory Safety", false, false)
 
-FunctionPass *llvm::createWebAssemblyMemorySafetyPass(bool IsOptNone) {
+FunctionPass *llvm::createWebAssemblyMemorySafetyPass() {
   return new WebAssemblyMemorySafety();
 }
 

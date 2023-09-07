@@ -54,7 +54,7 @@ FunctionPass *createWebAssemblyLowerBrUnless();
 FunctionPass *createWebAssemblyRegNumbering();
 FunctionPass *createWebAssemblyDebugFixup();
 FunctionPass *createWebAssemblyPeephole();
-FunctionPass *createWebAssemblyMemorySafetyPass(bool IsOptNone);
+FunctionPass *createWebAssemblyMemorySafetyPass();
 ModulePass *createWebAssemblyMCLowerPrePass();
 
 // PassRegistry initialization declarations.

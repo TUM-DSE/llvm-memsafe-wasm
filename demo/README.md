@@ -4,7 +4,7 @@
 
 ```shell
 for i in ../demo/demo*.c; do
-  ./build/bin/clang --target=wasm64-unknown-wasi --sysroot /scratch/martin/src/wasm/wasi-libc/sysroot -g -fsanitize=wasm-memsafety -Os -rtlib=compiler-rt wasm_memsafety_rtlib.c "$i" -o "${i%.c}.wasm"
+  ./build/bin/clang --target=wasm64-unknown-wasi -mmem-safety --sysroot /scratch/martin/src/wasm/wasi-libc/sysroot -g -fsanitize=wasm-memsafety -Os -rtlib=compiler-rt wasm_memsafety_rtlib.c "$i" -o "${i%.c}.wasm"
 done
 ```
 
