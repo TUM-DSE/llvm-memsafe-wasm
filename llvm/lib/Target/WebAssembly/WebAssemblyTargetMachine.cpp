@@ -468,6 +468,7 @@ void WebAssemblyPassConfig::addIRPasses() {
 
   // addPass(createWebAssemblyPointerAuthenticationFunctionPass());
   addPass(createWebAssemblyPointerAuthenticationModulePass());
+  // addPass(createWebAssemblyPointerAuthenticationLTOPass());
 
   TargetPassConfig::addIRPasses();
 }

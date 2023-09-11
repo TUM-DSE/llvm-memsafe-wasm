@@ -57,6 +57,7 @@ FunctionPass *createWebAssemblyPeephole();
 FunctionPass *createWebAssemblyMemorySafetyPass(bool IsOptNone);
 FunctionPass *createWebAssemblyPointerAuthenticationFunctionPass();
 ModulePass *createWebAssemblyPointerAuthenticationModulePass();
+ModulePass *createWebAssemblyPointerAuthenticationLTOPass();
 ModulePass *createWebAssemblyMCLowerPrePass();
 
 // PassRegistry initialization declarations.
@@ -89,6 +90,7 @@ void initializeWebAssemblySetP2AlignOperandsPass(PassRegistry &);
 void initializeWebAssemblyMemorySafetyPass(PassRegistry &);
 void initializeWebAssemblyPointerAuthenticationFunctionPass(PassRegistry &);
 void initializeWebAssemblyPointerAuthenticationModulePass(PassRegistry &);
+void initializeWebAssemblyPointerAuthenticationLTOPass(PassRegistry &);
 
 namespace WebAssembly {
 enum TargetIndex {
