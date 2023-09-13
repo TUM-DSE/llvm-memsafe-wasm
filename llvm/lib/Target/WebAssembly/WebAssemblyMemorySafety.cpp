@@ -211,6 +211,7 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
   DataLayout DL = F.getParent()->getDataLayout();
   LLVMContext &Ctx(F.getContext());
 
+  // Heap allocation tagging
   SmallVector<AllocaInst *, 8> AllocaInsts;
   SmallVector<std::pair<AllocFnKind, CallInst *>, 8> CallsToAllocFunctions;
 
@@ -294,6 +295,7 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
     Call->eraseFromParent();
   }
 
+  // Stack allocation tagging
   DominatorTree DT(F);
   auto *NewSegmentStackFunc = Intrinsic::getDeclaration(
       F.getParent(), Intrinsic::wasm_segment_stack_new);
