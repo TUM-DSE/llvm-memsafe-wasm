@@ -467,8 +467,8 @@ void WebAssemblyPassConfig::addIRPasses() {
   //     createWebAssemblyMemorySafetyPass(TM->getOptLevel() == CodeGenOpt::None));
 
   // addPass(createWebAssemblyPointerAuthenticationFunctionPass());
-  addPass(createWebAssemblyPointerAuthenticationModulePass());
-  // addPass(createWebAssemblyPointerAuthenticationLTOPass());
+  // addPass(createWebAssemblyPointerAuthenticationModulePass());
+  addPass(createWebAssemblyPointerAuthenticationLTOPass());
 
   TargetPassConfig::addIRPasses();
 }

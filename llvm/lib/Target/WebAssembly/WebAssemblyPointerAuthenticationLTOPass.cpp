@@ -301,14 +301,12 @@ bool findAllFunctionsWhereValueIsPassedAsArgument(Value &V, SmallVector<Function
   std::set<Value*> VisitedValues;
   // return findAllFunctionsWhereValueIsPassedAsArgumentHelper(V, FunctionCalls, VisitedValues, BaseModule);
   auto boolean = findAllFunctionsWhereValueIsPassedAsArgumentHelper(V, FunctionCalls, VisitedValues, BaseModule, BaseFunction);
-  if (FunctionCalls.size() != 0) {
-    // errs() << "found all functions where value is passed as arg: Val: " << V << "\n";
-    printSmallVector(FunctionCalls);
-  }
+  // if (FunctionCalls.size() != 0) {
+  //   // errs() << "found all functions where value is passed as arg: Val: " << V << "\n";
+  //   printSmallVector(FunctionCalls);
+  // }
   return boolean;
 }
-
-// TODO: discuss depth first search (what we do) vs breadth first search in thesis
 
 // A value has other uses if it is recursively passed as a function parameter
 // to an external function.
@@ -452,7 +450,6 @@ bool valueComesFromElsewhere(Value &V, Function &ParentFunction) {
   return valueComesFromElsewhereHelper(V, ParentFunction, VisitedValues);
 }
 
-
 // TODO:
 // Rule Relaxations (only possible with module pass):
 // - A value only has other uses if it is passed as a function parameter to an
@@ -473,50 +470,21 @@ bool memoryLocationIsSuitableForPA(Value &MemoryLocation, Function &F, Module &B
   // TODO: optimization possibility: cache the aliases that were already found to be non-suitable
   // If any of the aliases are not suitable, then all of the aliases should be not suitable
   for (auto Alias : Aliases) {
-    // if (valueHasOtherUsesWithoutAA(*Alias, F, BaseModule) || valueComesFromElsewhere(*Alias, F)) {
-    //   // errs() << "This will always be not suitable since it's the argument of the function. part 1\n";
+    if (valueHasOtherUsesWithoutAA(*Alias, F, BaseModule) || valueComesFromElsewhere(*Alias, F)) {
+      // errs() << "This will always be not suitable since it's the argument of the function. part 1\n";
+      return false;
+    }
+    // if (valueHasOtherUsesWithoutAA(*Alias, F, BaseModule)) { 
+    //   errs() << "Value " << Alias->getName() << " has other uses\n";
     //   return false;
     // }
-    if (valueHasOtherUsesWithoutAA(*Alias, F, BaseModule)) { 
-      errs() << "Value " << Alias->getName() << " has other uses\n";
-      return false;
-    }
-    if (valueComesFromElsewhere(*Alias, F)) {
-      errs() << "Value " << Alias->getName() << " comes from elsewhere\n";
-      return false;
-    }
+    // if (valueComesFromElsewhere(*Alias, F)) {
+    //   errs() << "Value " << Alias->getName() << " comes from elsewhere\n";
+    //   return false;
+    // }
   }
 
   return true;
-}
-
-void insertPACInstructions(SmallVector<StoreInst*, 8> &StorePointerInsts, SmallVector<LoadInst*, 8> &LoadPointerInsts, Function &F) {
-  auto *PointerSignFunc = Intrinsic::getDeclaration(
-      F.getParent(), Intrinsic::wasm_pointer_sign);
-  auto *PointerAuthFunc = Intrinsic::getDeclaration(
-      F.getParent(), Intrinsic::wasm_pointer_auth);
-
-  // Add pointer signing inst before pointer store inst
-  for (auto SI : StorePointerInsts) {
-    Value *PointerValueToStore = SI->getValueOperand();
-
-    auto *PointerSignInst = CallInst::Create(PointerSignFunc, {PointerValueToStore});
-    PointerSignInst->insertBefore(SI);
-
-    // Replace the value operand in the store inst with the new signed value
-    SI->setOperand(0, PointerSignInst);
-  }
-
-  // Add pointer authentication inst after pointer load inst
-  for (auto LI : LoadPointerInsts) {
-    auto *PointerAuthInst = CallInst::Create(PointerAuthFunc, {LI});
-    PointerAuthInst->insertAfter(LI);
-
-    // All further uses of the load's return value must use our authenticated pointer instead now
-    LI->replaceUsesWithIf(PointerAuthInst, [&](Use &U) {
-      return U.getUser() != PointerAuthInst;
-    });
-  }
 }
 
 // Go through all load and stores of pointers and insert them into respective
@@ -567,59 +535,70 @@ bool authenticateStoredAndLoadedPointers(Function &F, Module &BaseModule, SmallV
   bool modified = !(LoadPointerInsts.empty() && StorePointerInsts.empty());
   return modified;
 }
-};
 
-bool WebAssemblyPointerAuthenticationLTO::runOnModule(Module &M) {
-  // TODO: only run this on webassembly targets
-  // TODO: keep in mind that this **must** only be run once, and it will be during LTO
+void insertPACInstructions(SmallVector<StoreInst*, 8> &StorePointerInsts, SmallVector<LoadInst*, 8> &LoadPointerInsts, Function &F) {
+  auto *PointerSignFunc = Intrinsic::getDeclaration(
+      F.getParent(), Intrinsic::wasm_pointer_sign);
+  auto *PointerAuthFunc = Intrinsic::getDeclaration(
+      F.getParent(), Intrinsic::wasm_pointer_auth);
 
-  errs() << "=== In module: " << M.getName() << "\n";
-  for (Function &F : M) {
-    errs() << "function: " << F.getName() << "\n";
+  // Add pointer signing inst before pointer store inst
+  for (auto SI : StorePointerInsts) {
+    Value *PointerValueToStore = SI->getValueOperand();
+
+    auto *PointerSignInst = CallInst::Create(PointerSignFunc, {PointerValueToStore});
+    PointerSignInst->insertBefore(SI);
+
+    // Replace the value operand in the store inst with the new signed value
+    SI->setOperand(0, PointerSignInst);
   }
 
-  return false;
+  // Add pointer authentication inst after pointer load inst
+  for (auto LI : LoadPointerInsts) {
+    auto *PointerAuthInst = CallInst::Create(PointerAuthFunc, {LI});
+    PointerAuthInst->insertAfter(LI);
 
-  // bool modified = false;
+    // All further uses of the load's return value must use our authenticated pointer instead now
+    LI->replaceUsesWithIf(PointerAuthInst, [&](Use &U) {
+      return U.getUser() != PointerAuthInst;
+    });
+  }
+}
 
-  // // We only want to insert the new pointer sign and auth instructions after
-  // // the analysis of all functions.
-  // std::map<Function*, std::pair<SmallVector<StoreInst*, 8>, SmallVector<LoadInst*, 8>>> functionPointerMap;
+}; // end class WebAssemblyPointerAuthentication
 
-  // for (Function &F : M) {
-  //   // errs() << "======= Checking function: " << F.getName() << "\n";
+// TODO: only run this on webassembly targets. Either do a target check here, or, ideally, only add to the wasm pipeline (if that works with LTO)
+// TODO: keep in mind that this **must** only be run once, and it will be during LTO
+// TODO: this means we have to prevent it from running multiple times, e.g. once before and once during LTO. To do this, we could check if any pointer auth instructions have been inserted already. if yes, we exit.
+bool WebAssemblyPointerAuthenticationLTO::runOnModule(Module &M) {
+  bool modified = false;
 
-  //   SmallVector<StoreInst*, 8> storeList;
-  //   SmallVector<LoadInst*, 8> loadList;
+  // We only want to insert the new pointer sign and auth instructions after
+  // the analysis of all functions.
+  std::map<Function*, std::pair<SmallVector<StoreInst*, 8>, SmallVector<LoadInst*, 8>>> functionPointerMap;
 
-  //   if (authenticateStoredAndLoadedPointers(F, M, storeList, loadList)) {
-  //     // Collect suitable Stores and Loads into vectors
-  //     functionPointerMap[&F] = std::make_pair(storeList, loadList);
-  //     modified = true;
-  //   }
-  // }
+  for (Function &F : M) {
+    SmallVector<StoreInst*, 8> storeList;
+    SmallVector<LoadInst*, 8> loadList;
 
-  // // Actually insert the new pointer authentication instructions
-  // for (auto &[F, vectors] : functionPointerMap) {
-  //   auto &[storeList, loadList] = vectors;
-  //   insertPACInstructions(storeList, loadList, *F);
-  // }
+    if (authenticateStoredAndLoadedPointers(F, M, storeList, loadList)) {
+      // Collect suitable Stores and Loads into vectors
+      functionPointerMap[&F] = std::make_pair(storeList, loadList);
+      modified = true;
+    }
+  }
 
-  // for (Function &F : M) {
-  //   if (F.getName() == "__main_argc_argv" || F.getName() == "__original_main") {
-  //     F.dump();
-  //   }
-  //   // errs() << "------ Printing altered function: " << F.getName() << "\n";
-  //   // F.dump();
-  // }
+  // Actually insert the new pointer authentication instructions
+  for (auto &[F, vectors] : functionPointerMap) {
+    auto &[storeList, loadList] = vectors;
+    insertPACInstructions(storeList, loadList, *F);
+  }
 
-  // // TODO: potentially set to false in the future
-
-  // // No changes relevant to other LLVM transformation passes were made.
-  // // We simply added some instructions other passes are unaware of anyways.
-  // // However, to be on the safe side, we will still indicate that the function
-  // // was modified.
-  // return modified;
+  // No changes relevant to other LLVM transformation passes were made.
+  // We simply added some instructions other passes are unaware of anyways.
+  // However, to be on the safe side, we will still indicate that the function
+  // was modified.
+  return modified;
 }
 
 } // namespace
