@@ -3,7 +3,8 @@
 
 int main(int argc, char* argv[]) {
     if (argc != 2) {
-        fprintf(stderr, "Usage: %s <length_of_array>\n", argv[0]);
+        // fprintf(stderr, "Usage: %s <length_of_array>\n", argv[0]);
+        fprintf(stderr, "Usage: <length_of_array>\n");
         return 1;
     }
 
