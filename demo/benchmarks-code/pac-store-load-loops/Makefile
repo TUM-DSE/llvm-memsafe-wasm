@@ -1,5 +1,6 @@
 CC=/scratch/fritz/src/safe-wasm/llvm-project/build/bin/clang
-WASM_FLAGS=--target=wasm64-unknown-wasi --sysroot /scratch/martin/src/wasm/wasi-libc/sysroot -g -D_WASI_EMULATED_PROCESS_CLOCKS -lwasi-emulated-process-clocks -Wl,--stack-first -Wl,--initial-memory=104857600 -Wl,--max-memory=104857600 -Wl,-z,stack-size=83886080
+# WASM_FLAGS=--target=wasm64-unknown-wasi --sysroot /scratch/martin/src/wasm/wasi-libc/sysroot -g -D_WASI_EMULATED_PROCESS_CLOCKS -lwasi-emulated-process-clocks -Wl,--stack-first -Wl,--initial-memory=104857600 -Wl,--max-memory=104857600 -Wl,-z,stack-size=83886080
+WASM_FLAGS=--target=wasm64-unknown-wasi --sysroot /scratch/martin/src/wasm/wasi-libc/sysroot -g -D_WASI_EMULATED_PROCESS_CLOCKS -lwasi-emulated-process-clocks -Wl,--stack-first -Wl,--initial-memory=1677721600 -Wl,--max-memory=1677721600 -Wl,-z,stack-size=1342177280
 
 SAN_FLAGS=-march=wasm64-wasi+mem-safety -fsanitize=wasm-memsafety
 #CFLAGS=-O0 ${WASM_FLAGS}

@@ -2,7 +2,7 @@
 #include <stdlib.h>
 
 int main(int argc, char **argv) {
-    size_t n = 100000;
+    size_t n = 1000000;
 
     void* ptrArray[n];
 

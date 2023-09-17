@@ -364,7 +364,7 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
       FreeSegmentInst->insertBefore(Terminator);
     }
   }
-  F.dump();
+  // F.dump();
 
   return true;
 }
