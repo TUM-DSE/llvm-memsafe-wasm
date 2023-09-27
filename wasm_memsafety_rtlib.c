@@ -5,6 +5,14 @@
 
 #define TABLE_MAX_LOAD 0.75
 
+#define DEBUG 0
+
+#if DEBUG
+#define DEBUG_PRINT(...) fprintf (stderr, __VA_ARGS__)
+#else
+#define DEBUG_PRINT(...)
+#endif
+
 // TODO: when testing, make sure to disable assertions at runtime with -DNDEBUG
 typedef struct {
     void *key;
@@ -140,7 +148,7 @@ void *__wasm_memsafety_aligned_alloc_for_mte(size_t alignment, size_t requested_
     if (mem) {
         mem = __builtin_wasm_segment_new_stack(mem, aligned_size);
         // NOTE: remember to remove for benchmarking
-        fprintf(stderr, "Tagging memory %p, requested size %zu, allocated size %zu\n", mem, requested_size, aligned_size);
+        DEBUG_PRINT("Tagging memory %p, requested size %zu, allocated size %zu\n", mem, requested_size, aligned_size);
 
         __wasm_memsafety_table_set(&table, mem, requested_size, aligned_size);
     }
@@ -214,7 +222,7 @@ void __wasm_memsafety_free(void *ptr) {
     TableEntry entry = __wasm_memsafety_table_remove(&table, ptr);
     if (entry.key != NULL) {
         // NOTE: remember to remove for benchmarking
-        fprintf(stderr, "Untagging memory %p, requested size %zu, allocated size %zu\n", entry.key, entry.requested_size, entry.allocated_size);
+        DEBUG_PRINT("Untagging memory %p, requested size %zu, allocated size %zu\n", entry.key, entry.requested_size, entry.allocated_size);
         __builtin_wasm_segment_free(entry.key, entry.allocated_size);
         void *untagged_ptr = STRIP_MTE_TAG(entry.key);
         free(untagged_ptr);
@@ -249,7 +257,7 @@ void *__wasm_memsafety_realloc(void *ptr, size_t requested_size) {
         __wasm_memsafety_free(ptr);
         return NULL;
     }
-    
+
     TableEntry *entry = __wasm_memsafety_table_find(table.entries, table.capacity, ptr);
     if (entry->key == NULL) {
         // The pointer wasn't found in the table, indicating the problem that
