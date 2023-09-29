@@ -1,159 +1,147 @@
-#include <stdlib.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
-
-#define TABLE_MAX_LOAD 0.75
 
 #define DEBUG 0
 
 #if DEBUG
-#define DEBUG_PRINT(...) fprintf (stderr, __VA_ARGS__)
+#define DEBUG_PRINT(...) fprintf(stderr, __VA_ARGS__)
 #else
 #define DEBUG_PRINT(...)
 #endif
 
-// TODO: when testing, make sure to disable assertions at runtime with -DNDEBUG
-typedef struct {
-    void *key;
-    // The memory region size a user requests.
-    size_t requested_size;
-    // The memory region size that is actually allocated internally, which
-    // may be larger than requested_size due to alignment constraints.
-    size_t allocated_size;
-} TableEntry;
-
-typedef struct {
-    size_t count;
-    size_t capacity;
-    TableEntry *entries;
-} HashTable;
-
-static TableEntry *__wasm_memsafety_table_find(TableEntry *entries, size_t capacity, void *ptr) {
-    size_t index = (size_t) ptr % capacity;
-    TableEntry *tombstone = NULL;
-
-    for (;;) {
-        TableEntry *entry = &entries[index];
-
-        if (entry->key == NULL) {
-            if (entry->allocated_size == 0) {
-                // found empty entry
-                return tombstone != NULL ? tombstone : entry;
-            } else if (tombstone == NULL) {
-                // found tombstone
-                tombstone = entry;
-            }
-        } else if (entry->key == ptr) {
-            return entry;
-        }
-
-        index = (index + 1) % capacity;
-    }
-}
-
-static void __wasm_memsafety_table_resize(HashTable *table, size_t capacity) {
-    TableEntry *entries = calloc(capacity, sizeof(TableEntry));
-    for (int i = 0; i < capacity; ++i) {
-        entries[i].key = NULL;
-        entries[i].requested_size = 0;
-        entries[i].allocated_size = 0;
-    }
-
-    table->count = 0;
-    for (int i = 0; i < table->capacity; ++i) {
-        TableEntry *entry = &table->entries[i];
-        if (entry->key == NULL) {
-            continue;
-        }
-
-        TableEntry *dest = __wasm_memsafety_table_find(entries, capacity, entry->key);
-        dest->key = entry->key;
-        dest->requested_size = entry->requested_size;
-        dest->allocated_size = entry->allocated_size;
-        table->count++;
-    }
-
-    free(table->entries);
-    table->entries = entries;
-    table->capacity = capacity;
-}
-
-static bool __wasm_memsafety_table_set(HashTable *table, void *ptr, size_t requested_size, size_t allocated_size) {
-    if (table->count + 1 > table->capacity * TABLE_MAX_LOAD) {
-        size_t capacity = table->capacity < 8 ? 8 : table->capacity * 2;
-        __wasm_memsafety_table_resize(table, capacity);
-    }
-
-    TableEntry *entry = __wasm_memsafety_table_find(table->entries, table->capacity, ptr);
-    bool isNewKey = entry->key == NULL;
-    if (isNewKey && entry->allocated_size == 0) {
-        table->count++;
-    }
-
-    entry->key = ptr;
-    entry->requested_size = requested_size;
-    entry->allocated_size = allocated_size;
-    return isNewKey;
-}
-
-static TableEntry __wasm_memsafety_table_remove(HashTable *table, void *ptr) {
-    if (table->count == 0) {
-        return (TableEntry) {NULL, 0, 0};
-    }
-
-    TableEntry *entry = __wasm_memsafety_table_find(table->entries, table->capacity, ptr);
-    if (entry->key == NULL) {
-        return (TableEntry) {NULL, 0, 0};
-    }
-
-    TableEntry result = *entry;
-
-    // Place a tombstone in the entry
-    entry->key = NULL;
-    entry->requested_size = 0;
-    entry->allocated_size = 1;
-
-    return result;
-}
-
-static HashTable table = {.capacity = 0, .count = 0, .entries = NULL};
-
-
-// The descriptions for malloc, calloc, realloc and free have been taken from
-// the malloc(3) linux manual page.
-
 #define MTE_ALIGNMENT 16
-#define STRIP_MTE_TAG(ptr) ((void *) ((size_t) (ptr) & 0xF0FFFFFFFFFFFFFF))
+#define MTE_NON_TAG_BITS_MASK 0xF0FFFFFFFFFFFFFF
 
+typedef struct {
+  // The size of the (tagged) memory region accessible to the user. The size
+  // (of the memory) required to store this allocation metadata is excluded.
+  size_t tagged_size;
+} AllocMetadata;
 
-// Calculate smallest multiple of align that is not less than size
-static inline size_t __wasm_memsafety_align_size(size_t align, size_t size) {
-    return (size + (align - 1)) & (~(align - 1));
+// Size of aligned AllocMetadata.
+typedef struct {
+  // We have to respect a custom alignment value specified by the user when
+  // storing the metadata right before the user memory. We need to know the
+  // alignment before accessing the metadata, because: How is our free function
+  // supposed to know how far back to look to access the metadata? This depends
+  // on the alignment.
+  size_t metadata_size;
+} AllocMetadataSize;
+
+//          alignment             alignment
+// +----------------------+-----------------------+-------------------
+// | AllocMetadata        |     AllocMetadataSize | user memory ...
+// +----------------------+-----------------------+-------------------
+
+// NOTE: both of the structs could also be stored in the same alignment-block,
+// this graphic only showcases the order, and that the AllocAlignmentMetadata
+// comes directly before the start of the user memory, so the free() function
+// knows exactly where to look for it (right before its start).
+
+/**
+ * Align a value to a given alignment.
+ * @param val
+ * @param align
+ * @return the smallest value that is a multiple of align and greater or equal
+ * to val
+ */
+static inline size_t __wasm_memsafety_align(size_t val, size_t align) {
+  return (val + (align - 1)) & (~(align - 1));
+}
+
+static inline void *__wasm_memsafety_untag_ptr(void *ptr) {
+  return (void *)((size_t)ptr & MTE_NON_TAG_BITS_MASK);
+}
+
+/**
+ * Save the metadata for a given pointer.
+ * @param mem the pointer used internally that addresses the metadata and the
+ * user memory
+ * @param untagged_user_ptr the raw pointer given to the user
+ * @param metadata the metadata to save
+ * @param metadata_size the metadata size to save
+ */
+static inline void
+__wasm_memsafety_save_all_metadata(void *mem, void *untagged_user_ptr,
+                                   AllocMetadata metadata,
+                                   AllocMetadataSize metadata_size) {
+  // Store metadata right at the beginning of the metadata block.
+  void *metadata_ptr = mem;
+  *((AllocMetadata *)metadata_ptr) = metadata;
+
+  // Store metadata size right at the end of the metadata block.
+  char *metadata_size_ptr =
+      (char *)untagged_user_ptr - sizeof(AllocMetadataSize);
+  *((AllocMetadataSize *)metadata_size_ptr) = metadata_size;
+}
+
+/**
+ * Get the size metadata for a given pointer.
+ * @param untagged_user_ptr the raw pointer given to the user
+ * @return the pointer to the tagged_size metadata, which is also the internal
+ * pointer (addresses the entire allocation, so can be used for freeing)
+ */
+static inline AllocMetadata *
+__wasm_memsafety_get_metadata(void *untagged_user_ptr) {
+  // Get the alignment metadata first. Here, we assume it was saved directly
+  // before the user pointer.
+  char *metadata_size_ptr =
+      (char *)untagged_user_ptr - sizeof(AllocMetadataSize);
+  size_t metadata_size =
+      ((AllocMetadataSize *)metadata_size_ptr)->metadata_size;
+  char *metadata_ptr = (char *)untagged_user_ptr - metadata_size;
+
+  return (AllocMetadata *)(metadata_ptr);
 }
 
 // A custom aligned_alloc implementation that does not enforce the strict
 // requirement that (requested_size % aligment == 0). But it always aligns
 // the size to a multiple of MTE_ALIGNMENT, to guarantee MTE correctness.
-void *__wasm_memsafety_aligned_alloc_for_mte(size_t alignment, size_t requested_size) {
-    if (requested_size == 0) {
-        return NULL;
-    }
+void *__wasm_memsafety_aligned_alloc_for_mte(size_t alignment,
+                                             size_t requested_size) {
+  if (requested_size == 0) {
+    return NULL;
+  }
 
-    // Alignment has to be at least MTE_ALIGNMENT bytes.
-    alignment = alignment > MTE_ALIGNMENT ? alignment : MTE_ALIGNMENT;
-    size_t aligned_size = __wasm_memsafety_align_size(alignment, requested_size);
+  // Since the alignment value must be a power of 2, `align` will always be a
+  // multiple of MTE_ALIGNMENT.
+  alignment = alignment > MTE_ALIGNMENT ? alignment : MTE_ALIGNMENT;
 
-    void *mem = aligned_alloc(alignment, aligned_size);
-    if (mem) {
-        mem = __builtin_wasm_segment_new_stack(mem, aligned_size);
-        // NOTE: remember to remove for benchmarking
-        DEBUG_PRINT("Tagging memory %p, requested size %zu, allocated size %zu\n", mem, requested_size, aligned_size);
+  // The size of the region we want to tag with MTE.
+  size_t tagged_size = __wasm_memsafety_align(requested_size, alignment);
 
-        __wasm_memsafety_table_set(&table, mem, requested_size, aligned_size);
-    }
+  // We don't need the metadata and its size to be aligned separately. Instead,
+  // we increase compactness by requiring that only the addition of their
+  // sizes is aligned.
+  size_t metadata_size = __wasm_memsafety_align(
+      sizeof(AllocMetadata) + sizeof(AllocMetadataSize), alignment);
 
-    return mem;
+  size_t total_size = metadata_size + tagged_size;
+
+  void *mem = aligned_alloc(alignment, total_size);
+  if (!mem) {
+    return NULL;
+  }
+
+  // Transform mem into the form we want to pass to user, i.e. hide our
+  // embedded metadata.
+  void *untagged_user_ptr = (void *)((char *)mem + metadata_size);
+
+  // Save metadata (tagged_size and the metadata's size)
+  AllocMetadata metadata = {.tagged_size = tagged_size};
+  AllocMetadataSize metadata_size_ = {.metadata_size = metadata_size};
+  __wasm_memsafety_save_all_metadata(mem, untagged_user_ptr, metadata,
+                                     metadata_size_);
+
+  void *tagged_user_ptr =
+      __builtin_wasm_segment_new_stack(untagged_user_ptr, tagged_size);
+  // TODO: remove print statements when benchmarking
+  fprintf(stderr, "Tagging memory %p, size %zu\n", tagged_user_ptr,
+          tagged_size);
+
+  return tagged_user_ptr;
 }
 
 // The obsolete function memalign() allocates size bytes and returns a pointer
@@ -162,12 +150,12 @@ void *__wasm_memsafety_aligned_alloc_for_mte(size_t alignment, size_t requested_
 // memalign(), except for the added restriction that size should be a multiple
 // of alignment.
 void *__wasm_memsafety_aligned_alloc(size_t alignment, size_t requested_size) {
-    // aligned_alloc(3) defines that size must be a multiple of the alignment.
-    if (requested_size % alignment != 0) {
-      return NULL;
-    }
+  // aligned_alloc(3) defines that size must be a multiple of the alignment.
+  if (requested_size % alignment != 0) {
+    return NULL;
+  }
 
-    return __wasm_memsafety_aligned_alloc_for_mte(alignment, requested_size);
+  return __wasm_memsafety_aligned_alloc_for_mte(alignment, requested_size);
 }
 
 // The malloc() function allocates size bytes and returns a pointer to the
@@ -175,42 +163,43 @@ void *__wasm_memsafety_aligned_alloc(size_t alignment, size_t requested_size) {
 // returns either NULL, or a unique pointer value that can later be
 // successfully passed to free().
 void *__wasm_memsafety_malloc(size_t requested_size) {
-    return __wasm_memsafety_aligned_alloc_for_mte(MTE_ALIGNMENT, requested_size);
+  return __wasm_memsafety_aligned_alloc_for_mte(MTE_ALIGNMENT, requested_size);
 }
 
 // Check if multiplying a and b would overflow.
-static inline bool __wasm_memsafety_check_multiplication_overflow(size_t a, size_t b) {
-    // We want to check if `a * b > SIZE_MAX`, which can be mathematically
-    // transformed to `b > SIZE_MAX / a`
-    return (a != 0 && b > (SIZE_MAX / a));
+static inline bool __wasm_memsafety_check_multiplication_overflow(size_t a,
+                                                                  size_t b) {
+  // We want to check if `a * b > SIZE_MAX`, which can be mathematically
+  // transformed to `b > SIZE_MAX / a`
+  return (a != 0 && b > (SIZE_MAX / a));
 }
 
 // The calloc() function allocates memory for an array of nmemb elements of size
-// bytes each and returns a pointer to the allocated memory. The memory is set to
-// zero. If nmemb or size is 0, then calloc() returns either NULL, or a unique
-// pointer value that can later be successfully passed to free().
+// bytes each and returns a pointer to the allocated memory. The memory is set
+// to zero. If nmemb or size is 0, then calloc() returns either NULL, or a
+// unique pointer value that can later be successfully passed to free().
 void *__wasm_memsafety_calloc(size_t nmemb, size_t size) {
-    if (__wasm_memsafety_check_multiplication_overflow(nmemb, size)) {
-        return NULL;
-    }
-    size_t requested_size = nmemb * size;
+  if (__wasm_memsafety_check_multiplication_overflow(nmemb, size)) {
+    return NULL;
+  }
+  size_t requested_size = nmemb * size;
 
-    if (requested_size == 0) {
-        return NULL;
-    }
+  if (requested_size == 0) {
+    return NULL;
+  }
 
-    void *mem = __wasm_memsafety_malloc(requested_size);
-    if (mem) {
-        // We only set the requested number of bytes to 0, not any extra bytes
-        // that malloc might have allocated due to alignment.
-        memset(mem, 0, requested_size);
-    }
+  void *mem = __wasm_memsafety_malloc(requested_size);
+  if (mem) {
+    // We only set the requested number of bytes to 0, not any extra bytes
+    // that malloc might have allocated due to alignment.
+    memset(mem, 0, requested_size);
+  }
 
-    return mem;
+  return mem;
 }
 
 static inline size_t __wasm_memsafety_min(size_t a, size_t b) {
-    return a < b ? a : b;
+  return a < b ? a : b;
 }
 
 // The free() function frees the memory space pointed to by ptr,
@@ -218,69 +207,65 @@ static inline size_t __wasm_memsafety_min(size_t a, size_t b) {
 // related functions.  Otherwise, or if ptr has already been freed,
 // undefined behavior occurs.  If ptr is NULL, no operation is
 // performed.
-void __wasm_memsafety_free(void *ptr) {
-    TableEntry entry = __wasm_memsafety_table_remove(&table, ptr);
-    if (entry.key != NULL) {
-        // NOTE: remember to remove for benchmarking
-        DEBUG_PRINT("Untagging memory %p, requested size %zu, allocated size %zu\n", entry.key, entry.requested_size, entry.allocated_size);
-        __builtin_wasm_segment_free(entry.key, entry.allocated_size);
-        void *untagged_ptr = STRIP_MTE_TAG(entry.key);
-        free(untagged_ptr);
-    } else {
-        // This branch should only be entered when `free(NULL)` is called, which
-        // is safe and defined in the C standard.
-        free(ptr);
-    }
-}
+void __wasm_memsafety_free(void *tagged_ptr) {
+  if (tagged_ptr == NULL) {
+    return;
+  }
 
-// TODO: what should happen if we call realloc on a ptr that was previously called with aligned_alloc? Do we have to follow that original alignment?
-// TODO: we're not really setting errno's correctly, should we do that?
+  // Get tagged_size
+  void *untagged_ptr = __wasm_memsafety_untag_ptr(tagged_ptr);
+  AllocMetadata *metadata = __wasm_memsafety_get_metadata(untagged_ptr);
+  size_t tagged_size = metadata->tagged_size;
+
+  // TODO: remove print statements when benchmarking
+  fprintf(stderr, "Untagging memory %p, size %zu\n", tagged_ptr, tagged_size);
+  __builtin_wasm_segment_free(tagged_ptr, tagged_size);
+
+  // We stored the metadata at the beginning of the total allocation, so we
+  // use that.
+  void *mem = (void *)metadata;
+  free(mem);
+}
 
 // The realloc() function changes the size of the memory block pointed to by ptr
 // to size bytes. The contents will be unchanged in the range from the start of
-// the region up to the minimum of the old and new sizes. If the new size is larger
-// than the old size, the added memory will not be initialized. If ptr is NULL,
-// then the call is equivalent to malloc(size), for all values of size; if size is
-// equal to zero, and ptr is not NULL, then the call is equivalent to free(ptr).
-// Unless ptr is NULL, it must have been returned by an earlier call to malloc(),
-// calloc() or realloc(). If the area pointed to was moved, a free(ptr) is done.
-void *__wasm_memsafety_realloc(void *ptr, size_t requested_size) {
-    // malloc(3): If ptr is NULL, then the call is equivalent to malloc(size),
-    // for all values of size.
-    if (ptr == NULL) {
-        return __wasm_memsafety_malloc(requested_size);
-    }
+// the region up to the minimum of the old and new sizes. If the new size is
+// larger than the old size, the added memory will not be initialized. If ptr is
+// NULL, then the call is equivalent to malloc(size), for all values of size; if
+// size is equal to zero, and ptr is not NULL, then the call is equivalent to
+// free(ptr). Unless ptr is NULL, it must have been returned by an earlier call
+// to malloc(), calloc() or realloc(). If the area pointed to was moved, a
+// free(ptr) is done.
+void *__wasm_memsafety_realloc(void *tagged_ptr, size_t requested_size) {
+  // malloc(3): If ptr is NULL, then the call is equivalent to malloc(size),
+  // for all values of size.
+  if (tagged_ptr == NULL) {
+    return __wasm_memsafety_malloc(requested_size);
+  }
 
-    // malloc(3): If size is equal to zero, and ptr is not NULL, then the call is
-    // equivalent to free(ptr).
-    if (requested_size == 0) {
-        __wasm_memsafety_free(ptr);
-        return NULL;
-    }
+  // malloc(3): If size is equal to zero, and ptr is not NULL, then the call is
+  // equivalent to free(ptr).
+  if (requested_size == 0) {
+    __wasm_memsafety_free(tagged_ptr);
+    return NULL;
+  }
 
-    TableEntry *entry = __wasm_memsafety_table_find(table.entries, table.capacity, ptr);
-    if (entry->key == NULL) {
-        // The pointer wasn't found in the table, indicating the problem that
-        // the ptr was never created with a previous malloc, calloc or realloc.
-        return NULL;
-    }
+  void *untagged_ptr = __wasm_memsafety_untag_ptr(tagged_ptr);
+  AllocMetadata *metadata = __wasm_memsafety_get_metadata(untagged_ptr);
 
-    // TODO: maybe explicitly do nothing if requested_size == allocated_size, though for now this handles that case as well
-    // TODO: this assumes an alignment of 16 bytes, but that is not guaranteed (but changing alignment should be allowed since it's undefined in C standard)
-    // If the requested_size is in the last MTE_ALIGNMENT-wide block that was allocated
-    if ((entry->allocated_size - MTE_ALIGNMENT) < requested_size && requested_size <= entry->allocated_size) {
-        // Just update requested_size
-        __wasm_memsafety_table_set(&table, ptr, requested_size, entry->allocated_size);
-        return ptr;
-    }
+  // if the requested and current size are equal, do nothing
+  if (__wasm_memsafety_align(requested_size, MTE_ALIGNMENT) == metadata->tagged_size) {
+    return tagged_ptr;
+  }
 
-    // Allocate new memory, copy the data, and free the old memory
-    void *new_ptr = __wasm_memsafety_malloc(requested_size);
-    if (new_ptr) {
-        size_t copied_size = __wasm_memsafety_min(requested_size, entry->requested_size);
-        memcpy(new_ptr, ptr, copied_size);
-        __wasm_memsafety_free(ptr);
-    }
+  // Allocate new memory, copy the data, and free the old memory
+  void *new_ptr = __wasm_memsafety_malloc(requested_size);
+  if (new_ptr) {
+    size_t copied_size =
+        __wasm_memsafety_min(requested_size, metadata->tagged_size);
+    memcpy(new_ptr, tagged_ptr, copied_size);
+    __wasm_memsafety_free(tagged_ptr);
+  }
 
-    return new_ptr;
+  return new_ptr;
 }
