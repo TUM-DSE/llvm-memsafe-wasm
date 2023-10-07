@@ -136,9 +136,8 @@ void *__wasm_memsafety_aligned_alloc_for_mte(size_t alignment,
                                      metadata_size_);
 
   void *tagged_user_ptr =
-      __builtin_wasm_segment_new_stack(untagged_user_ptr, tagged_size);
-  // TODO: remove print statements when benchmarking
-  fprintf(stderr, "Tagging memory %p, size %zu\n", tagged_user_ptr,
+      __builtin_wasm_segment_new(untagged_user_ptr, tagged_size);
+  DEBUG_PRINT("Tagging memory %p, size %zu\n", tagged_user_ptr,
           tagged_size);
 
   return tagged_user_ptr;
@@ -217,8 +216,7 @@ void __wasm_memsafety_free(void *tagged_ptr) {
   AllocMetadata *metadata = __wasm_memsafety_get_metadata(untagged_ptr);
   size_t tagged_size = metadata->tagged_size;
 
-  // TODO: remove print statements when benchmarking
-  fprintf(stderr, "Untagging memory %p, size %zu\n", tagged_ptr, tagged_size);
+  DEBUG_PRINT("Untagging memory %p, size %zu\n", tagged_ptr, tagged_size);
   __builtin_wasm_segment_free(tagged_ptr, tagged_size);
 
   // We stored the metadata at the beginning of the total allocation, so we

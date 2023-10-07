@@ -18971,8 +18971,8 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
     Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_tls_base);
     return Builder.CreateCall(Callee);
   }
-  case WebAssembly::BI__builtin_wasm_segment_new_stack: {
-    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_segment_stack_new);
+  case WebAssembly::BI__builtin_wasm_segment_new: {
+    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_segment_new);
     Value *Ptr = EmitScalarExpr(E->getArg(0));
     Value *Size = EmitScalarExpr(E->getArg(1));
     return Builder.CreateCall(Callee, {Ptr, Size});

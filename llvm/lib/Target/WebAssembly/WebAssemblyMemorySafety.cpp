@@ -401,9 +401,9 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
 
   DominatorTree DT(F);
   auto *NewSegmentStackFunc = Intrinsic::getDeclaration(
-      F.getParent(), Intrinsic::wasm_segment_stack_new);
+      F.getParent(), Intrinsic::wasm_segment_new);
   auto *FreeSegmentStackFunc = Intrinsic::getDeclaration(
-      F.getParent(), Intrinsic::wasm_segment_stack_free);
+      F.getParent(), Intrinsic::wasm_segment_set_tag);
 
   // Alloca stack allocations
   for (auto *Alloca : AllocaInsts) {
