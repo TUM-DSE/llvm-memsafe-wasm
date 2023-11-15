@@ -65,7 +65,6 @@
 #include "llvm/Transforms/Utils/BuildLibCalls.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/MemoryTaggingSupport.h"
-#include "llvm/Analysis/TargetLibraryInfo.h"
 #include <algorithm>
 #include <cassert>
 #include <list>
@@ -223,40 +222,44 @@ enum class FlattenedAllocKind {
   Realloc,
   // Free
   Free,
+  // posix_memalign function
+  PosixMemalign,
   // We don't handle/support these kinds of AllocKind
   Unhandled,
 };
 
 struct FlattenedAllocData {
   FlattenedAllocKind kind;
-  Value* alignment = nullptr;
+  Value *alignment = nullptr;
 };
 
-FlattenedAllocData flattenAllocKind(Attribute Attr, const CallBase *Call, const TargetLibraryInfo *TLI) {
-  FlattenedAllocData data;
+FlattenedAllocData flattenAllocKind(Attribute Attr, const CallBase *Call,
+                                    const TargetLibraryInfo *TLI) {
+  FlattenedAllocData Data;
 
-  if (isAllocKind(Attr, AllocFnKind::Alloc) && isAllocKind(Attr, AllocFnKind::Uninitialized) && isAllocKind(Attr, AllocFnKind::Aligned)) {
-    data.kind = FlattenedAllocKind::AlignedAlloc;
-    data.alignment = Call->getArgOperandWithAttribute(Attribute::AllocAlign);
-    assert(data.alignment != nullptr && "Expected an alignment value for aligned_alloc-like function, but found none!");
+  if (isAllocKind(Attr, AllocFnKind::Alloc) &&
+      isAllocKind(Attr, AllocFnKind::Uninitialized) &&
+      isAllocKind(Attr, AllocFnKind::Aligned)) {
+    Data.kind = FlattenedAllocKind::AlignedAlloc;
+    Data.alignment = Call->getArgOperandWithAttribute(Attribute::AllocAlign);
+    assert(Data.alignment != nullptr &&
+           "Expected an alignment value for aligned_alloc-like function, but "
+           "found none!");
+  } else if (isAllocKind(Attr, AllocFnKind::Alloc) &&
+             isAllocKind(Attr, AllocFnKind::Uninitialized)) {
+    Data.kind = FlattenedAllocKind::Malloc;
+  } else if (isAllocKind(Attr, AllocFnKind::Alloc) &&
+             isAllocKind(Attr, AllocFnKind::Zeroed)) {
+    Data.kind = FlattenedAllocKind::Calloc;
+  } else if (isAllocKind(Attr, AllocFnKind::Realloc)) {
+    Data.kind = FlattenedAllocKind::Realloc;
+  } else if (isAllocKind(Attr, AllocFnKind::Free)) {
+    Data.kind = FlattenedAllocKind::Free;
+  } else {
+    Data.kind = FlattenedAllocKind::Unhandled;
   }
-  else if (isAllocKind(Attr, AllocFnKind::Alloc) && isAllocKind(Attr, AllocFnKind::Uninitialized)) {
-    data.kind = FlattenedAllocKind::Malloc;
-  }
-  else if (isAllocKind(Attr, AllocFnKind::Alloc) && isAllocKind(Attr, AllocFnKind::Zeroed)) {
-    data.kind = FlattenedAllocKind::Calloc;
-  }
-  else if (isAllocKind(Attr, AllocFnKind::Realloc)) {
-    data.kind = FlattenedAllocKind::Realloc;
-  }
-  else if (isAllocKind(Attr, AllocFnKind::Free)) {
-    data.kind = FlattenedAllocKind::Free;
-  }
-  else {
-    data.kind = FlattenedAllocKind::Unhandled;
-  }
-  
-  return data;
+
+  return Data;
 }
 
 bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
@@ -268,10 +271,12 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
 
   DataLayout DL = F.getParent()->getDataLayout();
   LLVMContext &Ctx(F.getContext());
-  TargetLibraryInfo *TLI = &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
+  TargetLibraryInfo *TLI =
+      &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
 
   SmallVector<AllocaInst *, 8> AllocaInsts;
-  SmallVector<std::pair<FlattenedAllocData, CallInst *>, 8> CallsToAllocFunctions;
+  SmallVector<std::pair<FlattenedAllocData, CallInst *>, 8>
+      CallsToAllocFunctions;
 
   for (auto &BB : F) {
     for (auto &I : BB) {
@@ -287,8 +292,10 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
       if (auto *Call = dyn_cast<CallInst>(&I)) {
         auto *CalledFunction = Call->getCalledFunction();
 
-        inferNonMandatoryLibFuncAttrs(CalledFunction->getParent(), CalledFunction->getName(), TLIAnalysis.getTLI(F));
-        
+        inferNonMandatoryLibFuncAttrs(CalledFunction->getParent(),
+                                      CalledFunction->getName(),
+                                      TLIAnalysis.getTLI(F));
+
         auto Attr = CalledFunction->getFnAttribute(Attribute::AllocKind);
         if (Attr.hasAttribute(Attribute::AllocKind)) {
           // Flatten the AllocKind so we can check if we want to/can replace
@@ -303,6 +310,12 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
           }
 
           CallsToAllocFunctions.emplace_back(FlattenedAllocData, Call);
+        } else if (CalledFunction->getName() == "posix_memalign") {
+          // we need special care to handle memalign.
+          FlattenedAllocData Data;
+          Data.kind = FlattenedAllocKind::PosixMemalign;
+          Data.alignment = nullptr;
+          CallsToAllocFunctions.emplace_back(Data, Call);
         }
       }
     }
@@ -340,70 +353,80 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
                         },
                         false));
   auto SafeFreeFn = F.getParent()->getOrInsertFunction(
-      "__wasm_memsafety_free",
-      FunctionType::get(Type::getVoidTy(Ctx),
+      "__wasm_memsafety_free", FunctionType::get(Type::getVoidTy(Ctx),
+                                                 {
+                                                     Type::getInt8PtrTy(Ctx),
+                                                 },
+                                                 false));
+  auto SafePosixMemalignFn = F.getParent()->getOrInsertFunction(
+      "__wasm_memsafety_posix_memalign",
+      FunctionType::get(Type::getInt32Ty(Ctx),
                         {
-                            Type::getInt8PtrTy(Ctx),
+                            Type::getInt8PtrTy(Ctx)->getPointerTo(),
+                            Type::getInt64Ty(Ctx),
+                            Type::getInt64Ty(Ctx),
                         },
                         false));
 
-
   for (auto [AllocData, Call] : CallsToAllocFunctions) {
     switch (AllocData.kind) {
-      case FlattenedAllocKind::AlignedAlloc: {
-        // Handle functions like C's aligned_alloc
-        auto *NewCall = CallInst::Create(SafeAlignedAllocFn,
-                                        // TODO: maybe we can just use getArgOperand(0) directly, that would be cleaner
-                                        {AllocData.alignment,
-                                          Call->getArgOperand(1)},
-                                        Call->getName(), Call);
-        Call->replaceAllUsesWith(NewCall);
-        break;
-      }
-      case FlattenedAllocKind::Malloc: {
-        // Handle functions like C's malloc
-        auto *NewCall = CallInst::Create(SafeMallocFn,
-                                        {Call->getArgOperand(0)},
-                                        Call->getName(), Call);
-        Call->replaceAllUsesWith(NewCall);
-        break;
-      }
-      case FlattenedAllocKind::Realloc: {
-        // Handle functions like C's realloc
-        auto *NewCall = CallInst::Create(SafeReallocFn,
-                                        {Call->getArgOperand(0),
-                                          Call->getArgOperand(1)},
-                                        Call->getName(), Call);
-        Call->replaceAllUsesWith(NewCall);
-        break;
-      }
-      case FlattenedAllocKind::Calloc: {
-        // Handle functions like C's calloc
-        auto *NewCall = CallInst::Create(SafeCallocFn,
-                                        {Call->getArgOperand(0),
-                                          Call->getArgOperand(1)},
-                                        Call->getName(), Call);
-        Call->replaceAllUsesWith(NewCall);
-        break;
-      }
-      case FlattenedAllocKind::Free: {
-        // Handle functions like C's free
-        auto *NewCall = CallInst::Create(SafeFreeFn, {Call->getArgOperand(0)},
-                                        Call->getName(), Call);
-        Call->replaceAllUsesWith(NewCall);
-        break;
-      }
-      default:
-        llvm_unreachable("We should never arrive here, as we already threw an error for this match before.");
+    case FlattenedAllocKind::AlignedAlloc: {
+      auto *NewCall = CallInst::Create(
+          SafeAlignedAllocFn,
+          // TODO: maybe we can just use getArgOperand(0) directly, that would
+          // be cleaner
+          {AllocData.alignment, Call->getArgOperand(1)}, Call->getName(), Call);
+      Call->replaceAllUsesWith(NewCall);
+      break;
+    }
+    case FlattenedAllocKind::Malloc: {
+      auto *NewCall = CallInst::Create(SafeMallocFn, {Call->getArgOperand(0)},
+                                       Call->getName(), Call);
+      Call->replaceAllUsesWith(NewCall);
+      break;
+    }
+    case FlattenedAllocKind::Realloc: {
+      auto *NewCall = CallInst::Create(
+          SafeReallocFn, {Call->getArgOperand(0), Call->getArgOperand(1)},
+          Call->getName(), Call);
+      Call->replaceAllUsesWith(NewCall);
+      break;
+    }
+    case FlattenedAllocKind::Calloc: {
+      auto *NewCall = CallInst::Create(
+          SafeCallocFn, {Call->getArgOperand(0), Call->getArgOperand(1)},
+          Call->getName(), Call);
+      Call->replaceAllUsesWith(NewCall);
+      break;
+    }
+    case FlattenedAllocKind::Free: {
+      CallInst::Create(SafeFreeFn, {Call->getArgOperand(0)}, Call->getName(),
+                       Call);
+      break;
+    }
+    case FlattenedAllocKind::PosixMemalign: {
+      auto *NewCall = CallInst::Create(SafePosixMemalignFn,
+                                       {
+                                           Call->getArgOperand(0),
+                                           Call->getArgOperand(1),
+                                           Call->getArgOperand(2),
+                                       },
+                                       Call->getName(), Call);
+      Call->replaceAllUsesWith(NewCall);
+      break;
+    }
+    default:
+      llvm_unreachable("We should never arrive here, as we already threw an "
+                       "error for this match before.");
     }
     Call->eraseFromParent();
   }
 
   DominatorTree DT(F);
-  auto *NewSegmentStackFunc = Intrinsic::getDeclaration(
-      F.getParent(), Intrinsic::wasm_segment_new);
-  auto *FreeSegmentStackFunc = Intrinsic::getDeclaration(
-      F.getParent(), Intrinsic::wasm_segment_set_tag);
+  auto *NewSegmentStackFunc =
+      Intrinsic::getDeclaration(F.getParent(), Intrinsic::wasm_segment_new);
+  auto *FreeSegmentStackFunc =
+      Intrinsic::getDeclaration(F.getParent(), Intrinsic::wasm_segment_set_tag);
 
   // Alloca stack allocations
   for (auto *Alloca : AllocaInsts) {

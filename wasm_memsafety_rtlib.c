@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <errno.h>
 
 #define DEBUG 0
 
@@ -55,45 +56,18 @@ static inline void *__wasm_memsafety_untag_ptr(void *ptr) {
   return (void *)((size_t)ptr & MTE_NON_TAG_BITS_MASK);
 }
 
-/**
- * Save the metadata for a given pointer.
- * @param mem the pointer used internally that addresses the metadata and the
- * user memory
- * @param untagged_user_ptr the raw pointer given to the user
- * @param metadata the metadata to save
- * @param metadata_size the metadata size to save
- */
-static inline void
-__wasm_memsafety_save_all_metadata(void *mem, void *untagged_user_ptr,
-                                   AllocMetadata metadata,
-                                   AllocMetadataSize metadata_size) {
-  // Store metadata right at the beginning of the metadata block.
-  void *metadata_ptr = mem;
-  *((AllocMetadata *)metadata_ptr) = metadata;
-
-  // Store metadata size right at the end of the metadata block.
-  char *metadata_size_ptr =
-      (char *)untagged_user_ptr - sizeof(AllocMetadataSize);
-  *((AllocMetadataSize *)metadata_size_ptr) = metadata_size;
+static inline AllocMetadataSize *__wasm_memsafety_get_metadata_size(void *ptr) {
+  void *untagged_ptr = __wasm_memsafety_untag_ptr(ptr);
+  AllocMetadataSize *meta_size = (AllocMetadataSize*) (((char*)untagged_ptr) - sizeof(AllocMetadataSize));
+  return meta_size;
 }
 
-/**
- * Get the size metadata for a given pointer.
- * @param untagged_user_ptr the raw pointer given to the user
- * @return the pointer to the tagged_size metadata, which is also the internal
- * pointer (addresses the entire allocation, so can be used for freeing)
- */
-static inline AllocMetadata *
-__wasm_memsafety_get_metadata(void *untagged_user_ptr) {
-  // Get the alignment metadata first. Here, we assume it was saved directly
-  // before the user pointer.
-  char *metadata_size_ptr =
-      (char *)untagged_user_ptr - sizeof(AllocMetadataSize);
-  size_t metadata_size =
-      ((AllocMetadataSize *)metadata_size_ptr)->metadata_size;
-  char *metadata_ptr = (char *)untagged_user_ptr - metadata_size;
-
-  return (AllocMetadata *)(metadata_ptr);
+static inline AllocMetadata *__wasm_memsafety_get_metadata(void *ptr) {
+  void *untagged_ptr = __wasm_memsafety_untag_ptr(ptr);
+  AllocMetadataSize *meta_size = __wasm_memsafety_get_metadata_size(ptr);
+  AllocMetadata *meta =
+      (AllocMetadata *)(((char*)untagged_ptr) - meta_size->metadata_size);
+  return meta;
 }
 
 // A custom aligned_alloc implementation that does not enforce the strict
@@ -118,6 +92,7 @@ void *__wasm_memsafety_aligned_alloc_for_mte(size_t alignment,
   size_t metadata_size = __wasm_memsafety_align(
       sizeof(AllocMetadata) + sizeof(AllocMetadataSize), alignment);
 
+  // total_size is aligned since both metadata_size and tagged_size are aligned.
   size_t total_size = metadata_size + tagged_size;
 
   void *mem = aligned_alloc(alignment, total_size);
@@ -127,13 +102,12 @@ void *__wasm_memsafety_aligned_alloc_for_mte(size_t alignment,
 
   // Transform mem into the form we want to pass to user, i.e. hide our
   // embedded metadata.
-  void *untagged_user_ptr = (void *)((char *)mem + metadata_size);
+  void *untagged_user_ptr = (void*)(((char*)mem) + metadata_size);
 
-  // Save metadata (tagged_size and the metadata's size)
-  AllocMetadata metadata = {.tagged_size = tagged_size};
-  AllocMetadataSize metadata_size_ = {.metadata_size = metadata_size};
-  __wasm_memsafety_save_all_metadata(mem, untagged_user_ptr, metadata,
-                                     metadata_size_);
+  AllocMetadataSize *meta_size = __wasm_memsafety_get_metadata_size(untagged_user_ptr);
+  meta_size->metadata_size = metadata_size;
+  AllocMetadata *metadata = __wasm_memsafety_get_metadata(untagged_user_ptr);
+  metadata->tagged_size = tagged_size;
 
   void *tagged_user_ptr =
       __builtin_wasm_segment_new(untagged_user_ptr, tagged_size);
@@ -155,6 +129,22 @@ void *__wasm_memsafety_aligned_alloc(size_t alignment, size_t requested_size) {
   }
 
   return __wasm_memsafety_aligned_alloc_for_mte(alignment, requested_size);
+}
+
+
+int __wasm_memsafety_posix_memalign(void **memptr, size_t alignment, size_t size) {
+  if ((alignment & (alignment - 1)) != 0) {
+    // alignment is not power of two.
+    return EINVAL;
+  }
+
+  void *result = __wasm_memsafety_aligned_alloc_for_mte(alignment, size);
+  if (!result) {
+    return ENOMEM;
+  }
+
+  *memptr = result;
+  return 0;
 }
 
 // The malloc() function allocates size bytes and returns a pointer to the
@@ -212,8 +202,7 @@ void __wasm_memsafety_free(void *tagged_ptr) {
   }
 
   // Get tagged_size
-  void *untagged_ptr = __wasm_memsafety_untag_ptr(tagged_ptr);
-  AllocMetadata *metadata = __wasm_memsafety_get_metadata(untagged_ptr);
+  AllocMetadata *metadata = __wasm_memsafety_get_metadata(tagged_ptr);
   size_t tagged_size = metadata->tagged_size;
 
   DEBUG_PRINT("Untagging memory %p, size %zu\n", tagged_ptr, tagged_size);
@@ -248,8 +237,7 @@ void *__wasm_memsafety_realloc(void *tagged_ptr, size_t requested_size) {
     return NULL;
   }
 
-  void *untagged_ptr = __wasm_memsafety_untag_ptr(tagged_ptr);
-  AllocMetadata *metadata = __wasm_memsafety_get_metadata(untagged_ptr);
+  AllocMetadata *metadata = __wasm_memsafety_get_metadata(tagged_ptr);
 
   // if the requested and current size are equal, do nothing
   if (__wasm_memsafety_align(requested_size, MTE_ALIGNMENT) == metadata->tagged_size) {
