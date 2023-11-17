@@ -38,8 +38,8 @@ BUILTIN(__builtin_wasm_max_f32, "fff", "nc")
 BUILTIN(__builtin_wasm_min_f64, "ddd", "nc")
 BUILTIN(__builtin_wasm_max_f64, "ddd", "nc")
 
-BUILTIN(__builtin_wasm_segment_new, "i*i*z", "n")
-BUILTIN(__builtin_wasm_segment_free, "vi*z", "n")
+BUILTIN(__builtin_wasm_segment_new, "v*v*z", "n")
+BUILTIN(__builtin_wasm_segment_free, "vv*z", "n")
 
 // Exception handling builtins.
 TARGET_BUILTIN(__builtin_wasm_throw, "vIUiv*", "r", "exception-handling")

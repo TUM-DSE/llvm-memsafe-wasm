@@ -255,3 +255,8 @@ void *__wasm_memsafety_realloc(void *tagged_ptr, size_t requested_size) {
 
   return new_ptr;
 }
+
+size_t __wasm_memsafety_malloc_usable_size(void *ptr) {
+  AllocMetadata *meta = __wasm_memsafety_get_metadata(ptr);
+  return meta->tagged_size;
+}

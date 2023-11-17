@@ -222,6 +222,8 @@ enum class FlattenedAllocKind {
   Free,
   // posix_memalign function
   PosixMemalign,
+  // malloc_usable_size function
+  MallocUsableSize,
   // We don't handle/support these kinds of AllocKind
   Unhandled,
 };
@@ -314,6 +316,11 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
           Data.kind = FlattenedAllocKind::PosixMemalign;
           Data.alignment = nullptr;
           CallsToAllocFunctions.emplace_back(Data, Call);
+        } else if (CalledFunction->getName() == "malloc_usable_size") {
+          FlattenedAllocData Data;
+          Data.kind = FlattenedAllocKind::MallocUsableSize;
+          Data.alignment = nullptr;
+          CallsToAllocFunctions.emplace_back(Data, Call);
         }
       }
     }
@@ -365,6 +372,10 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
                             Type::getInt64Ty(Ctx),
                         },
                         false));
+  auto SafeUsableSizeFn = F.getParent()->getOrInsertFunction(
+      "__wasm_memsafety_malloc_usable_size",
+      FunctionType::get(Type::getInt64Ty(Ctx), {Type::getInt8PtrTy(Ctx)},
+                        false));
 
   for (auto [AllocData, Call] : CallsToAllocFunctions) {
     switch (AllocData.kind) {
@@ -410,6 +421,12 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
                                            Call->getArgOperand(2),
                                        },
                                        Call->getName(), Call);
+      Call->replaceAllUsesWith(NewCall);
+      break;
+    }
+    case FlattenedAllocKind::MallocUsableSize: {
+      auto *NewCall = CallInst::Create(
+          SafeUsableSizeFn, {Call->getArgOperand(0)}, Call->getName(), Call);
       Call->replaceAllUsesWith(NewCall);
       break;
     }
