@@ -155,8 +155,6 @@ public:
   bool visitDbgInfoIntrinsic(DbgInfoIntrinsic &I) { return true; }
 
   bool visitInstruction(Instruction &I) {
-    I.dump();
-    // TODO: remove this and resafe with default return false
     llvm_unreachable("All cases should be handled above");
   }
 };
