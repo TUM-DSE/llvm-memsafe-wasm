@@ -1,8 +1,8 @@
+#include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 
 #define DEBUG 0
 
@@ -14,6 +14,10 @@
 
 #define MTE_ALIGNMENT 16
 #define MTE_NON_TAG_BITS_MASK 0xF0FFFFFFFFFFFFFF
+
+#ifdef CPP
+extern "C" {
+#endif
 
 typedef struct {
   // The size of the (tagged) memory region accessible to the user. The size
@@ -58,7 +62,8 @@ static inline void *__wasm_memsafety_untag_ptr(void *ptr) {
 
 static inline AllocMetadataSize *__wasm_memsafety_get_metadata_size(void *ptr) {
   void *untagged_ptr = __wasm_memsafety_untag_ptr(ptr);
-  AllocMetadataSize *meta_size = (AllocMetadataSize*) (((char*)untagged_ptr) - sizeof(AllocMetadataSize));
+  AllocMetadataSize *meta_size =
+      (AllocMetadataSize *)(((char *)untagged_ptr) - sizeof(AllocMetadataSize));
   return meta_size;
 }
 
@@ -66,7 +71,7 @@ static inline AllocMetadata *__wasm_memsafety_get_metadata(void *ptr) {
   void *untagged_ptr = __wasm_memsafety_untag_ptr(ptr);
   AllocMetadataSize *meta_size = __wasm_memsafety_get_metadata_size(ptr);
   AllocMetadata *meta =
-      (AllocMetadata *)(((char*)untagged_ptr) - meta_size->metadata_size);
+      (AllocMetadata *)(((char *)untagged_ptr) - meta_size->metadata_size);
   return meta;
 }
 
@@ -102,17 +107,17 @@ void *__wasm_memsafety_aligned_alloc_for_mte(size_t alignment,
 
   // Transform mem into the form we want to pass to user, i.e. hide our
   // embedded metadata.
-  void *untagged_user_ptr = (void*)(((char*)mem) + metadata_size);
+  void *untagged_user_ptr = (void *)(((char *)mem) + metadata_size);
 
-  AllocMetadataSize *meta_size = __wasm_memsafety_get_metadata_size(untagged_user_ptr);
+  AllocMetadataSize *meta_size =
+      __wasm_memsafety_get_metadata_size(untagged_user_ptr);
   meta_size->metadata_size = metadata_size;
   AllocMetadata *metadata = __wasm_memsafety_get_metadata(untagged_user_ptr);
   metadata->tagged_size = tagged_size;
 
   void *tagged_user_ptr =
       __builtin_wasm_segment_new(untagged_user_ptr, tagged_size);
-  DEBUG_PRINT("Tagging memory %p, size %zu\n", tagged_user_ptr,
-          tagged_size);
+  DEBUG_PRINT("Tagging memory %p, size %zu\n", tagged_user_ptr, tagged_size);
 
   return tagged_user_ptr;
 }
@@ -131,8 +136,8 @@ void *__wasm_memsafety_aligned_alloc(size_t alignment, size_t requested_size) {
   return __wasm_memsafety_aligned_alloc_for_mte(alignment, requested_size);
 }
 
-
-int __wasm_memsafety_posix_memalign(void **memptr, size_t alignment, size_t size) {
+int __wasm_memsafety_posix_memalign(void **memptr, size_t alignment,
+                                    size_t size) {
   if ((alignment & (alignment - 1)) != 0) {
     // alignment is not power of two.
     return EINVAL;
@@ -240,7 +245,8 @@ void *__wasm_memsafety_realloc(void *tagged_ptr, size_t requested_size) {
   AllocMetadata *metadata = __wasm_memsafety_get_metadata(tagged_ptr);
 
   // if the requested and current size are equal, do nothing
-  if (__wasm_memsafety_align(requested_size, MTE_ALIGNMENT) == metadata->tagged_size) {
+  if (__wasm_memsafety_align(requested_size, MTE_ALIGNMENT) ==
+      metadata->tagged_size) {
     return tagged_ptr;
   }
 
@@ -260,3 +266,7 @@ size_t __wasm_memsafety_malloc_usable_size(void *ptr) {
   AllocMetadata *meta = __wasm_memsafety_get_metadata(ptr);
   return meta->tagged_size;
 }
+
+#ifdef CPP
+}
+#endif

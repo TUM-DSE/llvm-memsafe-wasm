@@ -178,13 +178,6 @@ private:
     AU.addRequiredTransitive<TargetLibraryInfoWrapperPass>();
   }
 
-  bool isAllocKind(Attribute Attr, AllocFnKind Kind) const {
-    if (!Attr.hasAttribute(Attribute::AllocKind))
-      return false;
-
-    return (Attr.getAllocKind() & Kind) != AllocFnKind::Unknown;
-  }
-
   Value *alignAllocSize(Value *AllocSize, Instruction *InsertBefore) {
     auto *Ty = Type::getInt64Ty(AllocSize->getContext());
     Value *ZextValue =
@@ -198,13 +191,6 @@ private:
     return And;
   }
 };
-
-bool isAllocKind(Attribute Attr, AllocFnKind Kind) {
-  if (!Attr.hasAttribute(Attribute::AllocKind))
-    return false;
-
-  return (Attr.getAllocKind() & Kind) != AllocFnKind::Unknown;
-}
 
 // A flattened (each option contains no more "hidden" options through a bitmap)
 // version of AllocKind. This contains all AllocKind's that C supports, so if we
@@ -224,58 +210,18 @@ enum class FlattenedAllocKind {
   PosixMemalign,
   // malloc_usable_size function
   MallocUsableSize,
-  // We don't handle/support these kinds of AllocKind
-  Unhandled,
 };
-
-struct FlattenedAllocData {
-  FlattenedAllocKind kind;
-  Value *alignment = nullptr;
-};
-
-FlattenedAllocData flattenAllocKind(Attribute Attr, const CallBase *Call,
-                                    const TargetLibraryInfo *TLI) {
-  FlattenedAllocData Data;
-
-  if (isAllocKind(Attr, AllocFnKind::Alloc) &&
-      isAllocKind(Attr, AllocFnKind::Uninitialized) &&
-      isAllocKind(Attr, AllocFnKind::Aligned)) {
-    Data.kind = FlattenedAllocKind::AlignedAlloc;
-    Data.alignment = Call->getArgOperandWithAttribute(Attribute::AllocAlign);
-    assert(Data.alignment != nullptr &&
-           "Expected an alignment value for aligned_alloc-like function, but "
-           "found none!");
-  } else if (isAllocKind(Attr, AllocFnKind::Alloc) &&
-             isAllocKind(Attr, AllocFnKind::Uninitialized)) {
-    Data.kind = FlattenedAllocKind::Malloc;
-  } else if (isAllocKind(Attr, AllocFnKind::Alloc) &&
-             isAllocKind(Attr, AllocFnKind::Zeroed)) {
-    Data.kind = FlattenedAllocKind::Calloc;
-  } else if (isAllocKind(Attr, AllocFnKind::Realloc)) {
-    Data.kind = FlattenedAllocKind::Realloc;
-  } else if (isAllocKind(Attr, AllocFnKind::Free)) {
-    Data.kind = FlattenedAllocKind::Free;
-  } else {
-    Data.kind = FlattenedAllocKind::Unhandled;
-  }
-
-  return Data;
-}
 
 bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
   if (!F.hasFnAttribute(Attribute::SanitizeWasmMemSafety) ||
       F.getName().starts_with("__wasm_memsafety_"))
     return false;
 
-  auto &TLIAnalysis = getAnalysis<TargetLibraryInfoWrapperPass>();
-
   DataLayout DL = F.getParent()->getDataLayout();
   LLVMContext &Ctx(F.getContext());
-  TargetLibraryInfo *TLI =
-      &getAnalysis<TargetLibraryInfoWrapperPass>().getTLI(F);
 
   SmallVector<AllocaInst *, 8> AllocaInsts;
-  SmallVector<std::pair<FlattenedAllocData, CallInst *>, 8>
+  SmallVector<std::pair<FlattenedAllocKind, CallInst *>, 8>
       CallsToAllocFunctions;
 
   for (auto &BB : F) {
@@ -292,35 +238,27 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
       if (auto *Call = dyn_cast<CallInst>(&I)) {
         auto *CalledFunction = Call->getCalledFunction();
 
-        inferNonMandatoryLibFuncAttrs(CalledFunction->getParent(),
-                                      CalledFunction->getName(),
-                                      TLIAnalysis.getTLI(F));
+        if (!CalledFunction->hasName()) {
+          continue;
+        }
 
-        auto Attr = CalledFunction->getFnAttribute(Attribute::AllocKind);
-        if (Attr.hasAttribute(Attribute::AllocKind)) {
-          // Flatten the AllocKind so we can check if we want to/can replace
-          // this with our "__wasm_memsafety_" wrappers.
-          auto FlattenedAllocData = flattenAllocKind(Attr, Call, TLI);
-
-          if (FlattenedAllocData.kind == FlattenedAllocKind::Unhandled) {
-            // It's better to abruptly terminate than to allow an unsafe
-            // allocation function, which invalidates all kinds of system
-            // state/assumptions.
-            llvm::report_fatal_error("Unhandled alloc kind encountered", false);
-          }
-
-          CallsToAllocFunctions.emplace_back(FlattenedAllocData, Call);
+        if (CalledFunction->getName() == "malloc") {
+          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::Malloc, Call);
+        } else if (CalledFunction->getName() == "calloc") {
+          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::Calloc, Call);
+        } else if (CalledFunction->getName() == "realloc") {
+          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::Realloc, Call);
+        } else if (CalledFunction->getName() == "aligned_alloc") {
+          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::AlignedAlloc,
+                                             Call);
+        } else if (CalledFunction->getName() == "free") {
+          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::Free, Call);
         } else if (CalledFunction->getName() == "posix_memalign") {
-          // we need special care to handle memalign.
-          FlattenedAllocData Data;
-          Data.kind = FlattenedAllocKind::PosixMemalign;
-          Data.alignment = nullptr;
-          CallsToAllocFunctions.emplace_back(Data, Call);
+          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::PosixMemalign,
+                                             Call);
         } else if (CalledFunction->getName() == "malloc_usable_size") {
-          FlattenedAllocData Data;
-          Data.kind = FlattenedAllocKind::MallocUsableSize;
-          Data.alignment = nullptr;
-          CallsToAllocFunctions.emplace_back(Data, Call);
+          CallsToAllocFunctions.emplace_back(
+              FlattenedAllocKind::MallocUsableSize, Call);
         }
       }
     }
@@ -377,14 +315,12 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
       FunctionType::get(Type::getInt64Ty(Ctx), {Type::getInt8PtrTy(Ctx)},
                         false));
 
-  for (auto [AllocData, Call] : CallsToAllocFunctions) {
-    switch (AllocData.kind) {
+  for (auto [AllocKind, Call] : CallsToAllocFunctions) {
+    switch (AllocKind) {
     case FlattenedAllocKind::AlignedAlloc: {
       auto *NewCall = CallInst::Create(
-          SafeAlignedAllocFn,
-          // TODO: maybe we can just use getArgOperand(0) directly, that would
-          // be cleaner
-          {AllocData.alignment, Call->getArgOperand(1)}, Call->getName(), Call);
+          SafeAlignedAllocFn, {Call->getArgOperand(0), Call->getArgOperand(1)},
+          Call->getName(), Call);
       Call->replaceAllUsesWith(NewCall);
       break;
     }
@@ -430,9 +366,6 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
       Call->replaceAllUsesWith(NewCall);
       break;
     }
-    default:
-      llvm_unreachable("We should never arrive here, as we already threw an "
-                       "error for this match before.");
     }
     Call->eraseFromParent();
   }
