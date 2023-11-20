@@ -12,6 +12,10 @@
 // against already-released libc++'s.
 // XFAIL: stdlib=apple-libc++ && target={{.+}}-apple-macosx{{10.15|11.0}}
 
+// Starting in Android N (API 24), SELinux policy prevents the shell user from
+// creating a FIFO file.
+// XFAIL: LIBCXX-ANDROID-FIXME && !android-device-api={{21|22|23}}
+
 // <filesystem>
 
 // class directory_entry
@@ -33,8 +37,8 @@ static void signatures() {
   {
     const fs::directory_entry e = {};
     std::error_code ec;
-    static_assert(std::is_same<decltype(e.file_size()), uintmax_t>::value, "");
-    static_assert(std::is_same<decltype(e.file_size(ec)), uintmax_t>::value,
+    static_assert(std::is_same<decltype(e.file_size()), std::uintmax_t>::value, "");
+    static_assert(std::is_same<decltype(e.file_size(ec)), std::uintmax_t>::value,
                   "");
     static_assert(noexcept(e.file_size()) == false, "");
     static_assert(noexcept(e.file_size(ec)) == true, "");
@@ -51,7 +55,7 @@ static void basic() {
 
   {
     directory_entry ent(file);
-    uintmax_t expect = file_size(ent);
+    std::uintmax_t expect = file_size(ent);
     assert(expect == 42);
 
     // Remove the file to show that the results were already in the cache.
@@ -65,7 +69,7 @@ static void basic() {
   {
     directory_entry ent(sym);
 
-    uintmax_t expect = file_size(ent);
+    std::uintmax_t expect = file_size(ent);
     assert(expect == 99);
 
     LIBCPP_ONLY(remove(ent));
@@ -97,11 +101,11 @@ static void not_regular_file() {
     std::error_code ec = GetTestEC(0);
 
     std::error_code other_ec = GetTestEC(1);
-    uintmax_t expect = file_size(p, other_ec);
+    std::uintmax_t expect = file_size(p, other_ec);
 
-    uintmax_t got = ent.file_size(ec);
+    std::uintmax_t got = ent.file_size(ec);
     assert(got == expect);
-    assert(got == uintmax_t(-1));
+    assert(got == std::uintmax_t(-1));
     assert(ec == other_ec);
     assert(ErrorIs(ec, TC.expected_err));
 
@@ -136,7 +140,7 @@ static void error_reporting() {
     assert(ErrorIs(ec, std::errc::no_such_file_or_directory));
 
     ec = GetTestEC();
-    assert(ent.file_size(ec) == uintmax_t(-1));
+    assert(ent.file_size(ec) == std::uintmax_t(-1));
     assert(ErrorIs(ec, std::errc::no_such_file_or_directory));
 
     ExceptionChecker Checker(static_env.DNE,
@@ -149,8 +153,8 @@ static void error_reporting() {
     directory_entry ent;
 
     std::error_code ec = GetTestEC();
-    uintmax_t expect_bad = file_size(static_env.BadSymlink, ec);
-    assert(expect_bad == uintmax_t(-1));
+    std::uintmax_t expect_bad = file_size(static_env.BadSymlink, ec);
+    assert(expect_bad == std::uintmax_t(-1));
     assert(ErrorIs(ec, std::errc::no_such_file_or_directory));
 
     ec = GetTestEC();
@@ -173,7 +177,7 @@ static void error_reporting() {
   // test a file w/o appropriate permissions.
   {
     directory_entry ent;
-    uintmax_t expect_good = file_size(file);
+    std::uintmax_t expect_good = file_size(file);
     permissions(dir, perms::none);
 
     std::error_code ec = GetTestEC();
@@ -182,7 +186,7 @@ static void error_reporting() {
     assert(ErrorIs(ec, std::errc::permission_denied));
 
     ec = GetTestEC();
-    assert(ent.file_size(ec) == uintmax_t(-1));
+    assert(ent.file_size(ec) == std::uintmax_t(-1));
     assert(ErrorIs(ec, std::errc::permission_denied));
 
     ExceptionChecker Checker(file, std::errc::permission_denied, "file_size");
@@ -198,7 +202,7 @@ static void error_reporting() {
   // test a symlink w/o appropriate permissions.
   {
     directory_entry ent;
-    uintmax_t expect_good = file_size(sym_in_dir);
+    std::uintmax_t expect_good = file_size(sym_in_dir);
     permissions(dir, perms::none);
 
     std::error_code ec = GetTestEC();
@@ -207,7 +211,7 @@ static void error_reporting() {
     assert(ErrorIs(ec, std::errc::permission_denied));
 
     ec = GetTestEC();
-    assert(ent.file_size(ec) == uintmax_t(-1));
+    assert(ent.file_size(ec) == std::uintmax_t(-1));
     assert(ErrorIs(ec, std::errc::permission_denied));
 
     ExceptionChecker Checker(sym_in_dir, std::errc::permission_denied,
@@ -224,7 +228,7 @@ static void error_reporting() {
   // test a symlink to a file w/o appropriate permissions
   {
     directory_entry ent;
-    uintmax_t expect_good = file_size(sym_out_of_dir);
+    std::uintmax_t expect_good = file_size(sym_out_of_dir);
     permissions(dir, perms::none);
 
     std::error_code ec = GetTestEC();
@@ -233,7 +237,7 @@ static void error_reporting() {
     assert(!ec);
 
     ec = GetTestEC();
-    assert(ent.file_size(ec) == uintmax_t(-1));
+    assert(ent.file_size(ec) == std::uintmax_t(-1));
     assert(ErrorIs(ec, std::errc::permission_denied));
 
     ExceptionChecker Checker(sym_out_of_dir, std::errc::permission_denied,

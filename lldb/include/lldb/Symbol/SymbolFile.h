@@ -22,6 +22,7 @@
 #include "lldb/Symbol/TypeList.h"
 #include "lldb/Symbol/TypeSystem.h"
 #include "lldb/Target/Statistics.h"
+#include "lldb/Utility/StructuredData.h"
 #include "lldb/Utility/XcodeSDK.h"
 #include "lldb/lldb-private.h"
 #include "llvm/ADT/DenseSet.h"
@@ -30,6 +31,7 @@
 
 #include <mutex>
 #include <optional>
+#include <unordered_map>
 
 #if defined(LLDB_CONFIGURATION_DEBUG)
 #define ASSERT_MODULE_LOCK(expr) (expr->AssertModuleLock())
@@ -223,14 +225,16 @@ public:
 
   virtual bool CompleteType(CompilerType &compiler_type) = 0;
   virtual void ParseDeclsForContext(CompilerDeclContext decl_ctx) {}
-  virtual CompilerDecl GetDeclForUID(lldb::user_id_t uid) {
-    return CompilerDecl();
-  }
+  virtual CompilerDecl GetDeclForUID(lldb::user_id_t uid) { return {}; }
   virtual CompilerDeclContext GetDeclContextForUID(lldb::user_id_t uid) {
-    return CompilerDeclContext();
+    return {};
   }
   virtual CompilerDeclContext GetDeclContextContainingUID(lldb::user_id_t uid) {
-    return CompilerDeclContext();
+    return {};
+  }
+  virtual std::vector<CompilerContext>
+  GetCompilerContextForUID(lldb::user_id_t uid) {
+    return {};
   }
   virtual uint32_t ResolveSymbolContext(const Address &so_addr,
                                         lldb::SymbolContextItem resolve_scope,
@@ -326,8 +330,17 @@ public:
   virtual llvm::Expected<lldb::TypeSystemSP>
   GetTypeSystemForLanguage(lldb::LanguageType language) = 0;
 
+  /// Finds a namespace of name \ref name and whose parent
+  /// context is \ref parent_decl_ctx.
+  ///
+  /// If \code{.cpp} !parent_decl_ctx.IsValid() \endcode
+  /// then this function will consider all namespaces that
+  /// match the name. If \ref only_root_namespaces is
+  /// true, only consider in the search those DIEs that
+  /// represent top-level namespaces.
   virtual CompilerDeclContext
-  FindNamespace(ConstString name, const CompilerDeclContext &parent_decl_ctx) {
+  FindNamespace(ConstString name, const CompilerDeclContext &parent_decl_ctx,
+                bool only_root_namespaces = false) {
     return CompilerDeclContext();
   }
 
@@ -424,6 +437,23 @@ public:
   virtual bool GetDebugInfoHadFrameVariableErrors() const = 0;
   virtual void SetDebugInfoHadFrameVariableErrors() = 0;
 
+  /// Return true if separate debug info files are supported and this function
+  /// succeeded, false otherwise.
+  ///
+  /// \param[out] d
+  ///     If this function succeeded, then this will be a dictionary that
+  ///     contains the keys "type", "symfile", and "separate-debug-info-files".
+  ///     "type" can be used to assume the structure of each object in
+  ///     "separate-debug-info-files".
+  /// \param errors_only
+  ///     If true, then only return separate debug info files that encountered
+  ///     errors during loading. If false, then return all expected separate
+  ///     debug info files, regardless of whether they were successfully loaded.
+  virtual bool GetSeparateDebugInfo(StructuredData::Dictionary &d,
+                                    bool errors_only) {
+    return false;
+  };
+
   virtual lldb::TypeSP
   MakeType(lldb::user_id_t uid, ConstString name,
            std::optional<uint64_t> byte_size, SymbolContextScope *context,
@@ -435,8 +465,19 @@ public:
 
   virtual lldb::TypeSP CopyType(const lldb::TypeSP &other_type) = 0;
 
+  /// Returns a map of compilation unit to the compile option arguments
+  /// associated with that compilation unit.
+  std::unordered_map<lldb::CompUnitSP, Args> GetCompileOptions() {
+    std::unordered_map<lldb::CompUnitSP, Args> args;
+    GetCompileOptions(args);
+    return args;
+  }
+
 protected:
   void AssertModuleLock();
+
+  virtual void GetCompileOptions(
+      std::unordered_map<lldb::CompUnitSP, lldb_private::Args> &args) {}
 
 private:
   SymbolFile(const SymbolFile &) = delete;

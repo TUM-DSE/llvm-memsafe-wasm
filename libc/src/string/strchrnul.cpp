@@ -11,13 +11,10 @@
 
 #include "src/__support/common.h"
 
-namespace __llvm_libc {
+namespace LIBC_NAMESPACE {
 
 LLVM_LIBC_FUNCTION(char *, strchrnul, (const char *src, int c)) {
-  const char ch = static_cast<char>(c);
-  for (; *src && *src != ch; ++src)
-    ;
-  return const_cast<char *>(src);
+  return internal::strchr_implementation<false>(src, c);
 }
 
-} // namespace __llvm_libc
+} // namespace LIBC_NAMESPACE

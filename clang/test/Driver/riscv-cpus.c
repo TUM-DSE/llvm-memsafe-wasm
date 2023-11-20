@@ -7,24 +7,33 @@
 // RUN: %clang --target=riscv64 -### -c %s 2>&1 -mcpu=rocket-rv64 | FileCheck -check-prefix=MCPU-ROCKET64 %s
 // MCPU-ROCKET64: "-nostdsysteminc" "-target-cpu" "rocket-rv64"
 // MCPU-ROCKET64: "-target-feature" "+zicsr" "-target-feature" "+zifencei"
-// MCPU-ROCKET64: "-target-feature" "+64bit"
 
 // RUN: %clang --target=riscv32 -### -c %s 2>&1 -mcpu=syntacore-scr1-base | FileCheck -check-prefix=MCPU-SYNTACORE-SCR1-BASE %s
 // MCPU-SYNTACORE-SCR1-BASE: "-target-cpu" "syntacore-scr1-base"
 // MCPU-SYNTACORE-SCR1-BASE: "-target-feature" "+c"
 // MCPU-SYNTACORE-SCR1-BASE: "-target-feature" "+zicsr" "-target-feature" "+zifencei"
-// MCPU-SYNTACORE-SCR1-BASE: "-target-feature" "-64bit"
 // MCPU-SYNTACORE-SCR1-BASE: "-target-abi" "ilp32"
 
 // RUN: %clang --target=riscv32 -### -c %s 2>&1 -mcpu=syntacore-scr1-max | FileCheck -check-prefix=MCPU-SYNTACORE-SCR1-MAX %s
 // MCPU-SYNTACORE-SCR1-MAX: "-target-cpu" "syntacore-scr1-max"
 // MCPU-SYNTACORE-SCR1-MAX: "-target-feature" "+m" "-target-feature" "+c"
 // MCPU-SYNTACORE-SCR1-MAX: "-target-feature" "+zicsr" "-target-feature" "+zifencei"
-// MCPU-SYNTACORE-SCR1-MAX: "-target-feature" "-64bit"
 // MCPU-SYNTACORE-SCR1-MAX: "-target-abi" "ilp32"
 
+// RUN: %clang --target=riscv64 -### -c %s 2>&1 -mcpu=xiangshan-nanhu | FileCheck -check-prefix=MCPU-XIANGSHAN-NANHU %s
+// MCPU-XIANGSHAN-NANHU: "-nostdsysteminc" "-target-cpu" "xiangshan-nanhu"
+// MCPU-XIANGSHAN-NANHU-SAME: "-target-feature" "+m" "-target-feature" "+a" "-target-feature" "+f" "-target-feature" "+d"
+// MCPU-XIANGSHAN-NANHU-SAME: "-target-feature" "+c"
+// MCPU-XIANGSHAN-NANHU-SAME: "-target-feature" "+zicbom" "-target-feature" "+zicboz" "-target-feature" "+zicsr" "-target-feature" "+zifencei"
+// MCPU-XIANGSHAN-NANHU-SAME: "-target-feature" "+zba" "-target-feature" "+zbb" "-target-feature" "+zbc"
+// MCPU-XIANGSHAN-NANHU-SAME: "-target-feature" "+zbkb" "-target-feature" "+zbkc" "-target-feature" "+zbkx" "-target-feature" "+zbs"
+// MCPU-XIANGSHAN-NANHU-SAME: "-target-feature" "+zkn" "-target-feature" "+zknd" "-target-feature" "+zkne" "-target-feature" "+zknh"
+// MCPU-XIANGSHAN-NANHU-SAME: "-target-feature" "+zks" "-target-feature" "+zksed" "-target-feature" "+zksh" "-target-feature" "+svinval"
+// MCPU-XIANGSHAN-NANHU-SAME: "-target-abi" "lp64d"
+
 // We cannot check much for -mcpu=native, but it should be replaced by a valid CPU string.
-// RUN: %clang --target=riscv64 -### -c %s 2>&1 -mcpu=native | FileCheck -check-prefix=MCPU-NATIVE %s
+// RUN: %clang --target=riscv64 -### -c %s -mcpu=native 2> %t.err || true
+// RUN: FileCheck --input-file=%t.err -check-prefix=MCPU-NATIVE %s
 // MCPU-NATIVE-NOT: "-target-cpu" "native"
 
 // RUN: %clang --target=riscv32 -### -c %s 2>&1 -mtune=rocket-rv32 | FileCheck -check-prefix=MTUNE-ROCKET32 %s
@@ -38,6 +47,34 @@
 
 // RUN: %clang --target=riscv32 -### -c %s 2>&1 -mtune=syntacore-scr1-max | FileCheck -check-prefix=MTUNE-SYNTACORE-SCR1-MAX %s
 // MTUNE-SYNTACORE-SCR1-MAX: "-tune-cpu" "syntacore-scr1-max"
+
+// RUN: %clang --target=riscv64 -### -c %s 2>&1 -mcpu=veyron-v1 | FileCheck -check-prefix=MCPU-VEYRON-V1 %s
+// MCPU-VEYRON-V1: "-target-cpu" "veyron-v1"
+// MCPU-VEYRON-V1: "-target-feature" "+m"
+// MCPU-VEYRON-V1: "-target-feature" "+a"
+// MCPU-VEYRON-V1: "-target-feature" "+f"
+// MCPU-VEYRON-V1: "-target-feature" "+d"
+// MCPU-VEYRON-V1: "-target-feature" "+c"
+// MCPU-VEYRON-V1: "-target-feature" "+zicbom"
+// MCPU-VEYRON-V1: "-target-feature" "+zicbop"
+// MCPU-VEYRON-V1: "-target-feature" "+zicboz"
+// MCPU-VEYRON-V1: "-target-feature" "+zicntr"
+// MCPU-VEYRON-V1: "-target-feature" "+zicsr"
+// MCPU-VEYRON-V1: "-target-feature" "+zifencei"
+// MCPU-VEYRON-V1: "-target-feature" "+zihintpause"
+// MCPU-VEYRON-V1: "-target-feature" "+zihpm"
+// MCPU-VEYRON-V1: "-target-feature" "+zba"
+// MCPU-VEYRON-V1: "-target-feature" "+zbb"
+// MCPU-VEYRON-V1: "-target-feature" "+zbc"
+// MCPU-VEYRON-V1: "-target-feature" "+zbs"
+// MCPU-VEYRON-V1: "-target-feature" "+xventanacondops"
+// MCPU-VEYRON-V1: "-target-abi" "lp64d"
+
+// RUN: %clang --target=riscv64 -### -c %s 2>&1 -mtune=veyron-v1 | FileCheck -check-prefix=MTUNE-VEYRON-V1 %s
+// MTUNE-VEYRON-V1: "-tune-cpu" "veyron-v1"
+
+// RUN: %clang --target=riscv64 -### -c %s 2>&1 -mtune=xiangshan-nanhu | FileCheck -check-prefix=MTUNE-XIANGSHAN-NANHU %s
+// MTUNE-XIANGSHAN-NANHU: "-tune-cpu" "xiangshan-nanhu"
 
 // Check mtune alias CPU has resolved to the right CPU according XLEN.
 // RUN: %clang --target=riscv32 -### -c %s 2>&1 -mtune=generic | FileCheck -check-prefix=MTUNE-GENERIC-32 %s
@@ -92,7 +129,6 @@
 // MCPU-ABI-SIFIVE-S21: "-target-feature" "+m" "-target-feature" "+a"
 // MCPU-ABI-SIFIVE-S21: "-target-feature" "+c"
 // MCPU-ABI-SIFIVE-S21: "-target-feature" "+zicsr" "-target-feature" "+zifencei"
-// MCPU-ABI-SIFIVE-S21: "-target-feature" "+64bit"
 // MCPU-ABI-SIFIVE-S21: "-target-abi" "lp64"
 
 // mcpu with mabi option
@@ -101,7 +137,6 @@
 // MCPU-ABI-SIFIVE-S51: "-target-feature" "+m" "-target-feature" "+a"
 // MCPU-ABI-SIFIVE-S51: "-target-feature" "+c"
 // MCPU-ABI-SIFIVE-S51: "-target-feature" "+zicsr" "-target-feature" "+zifencei"
-// MCPU-ABI-SIFIVE-S51: "-target-feature" "+64bit"
 // MCPU-ABI-SIFIVE-S51: "-target-abi" "lp64"
 
 // mcpu with default march
@@ -110,7 +145,6 @@
 // MCPU-SIFIVE-S54: "-target-feature" "+m" "-target-feature" "+a" "-target-feature" "+f" "-target-feature" "+d"
 // MCPU-SIFIVE-S54: "-target-feature" "+c"
 // MCPU-SIFIVE-S54: "-target-feature" "+zicsr" "-target-feature" "+zifencei"
-// MCPU-SIFIVE-S54: "-target-feature" "+64bit"
 // MCPU-SIFIVE-S54: "-target-abi" "lp64d"
 
 // mcpu with mabi option
@@ -118,8 +152,8 @@
 // MCPU-SIFIVE-S76: "-nostdsysteminc" "-target-cpu" "sifive-s76"
 // MCPU-SIFIVE-S76: "-target-feature" "+m" "-target-feature" "+a" "-target-feature" "+f" "-target-feature" "+d"
 // MCPU-SIFIVE-S76: "-target-feature" "+c"
-// MCPU-SIFIVE-S76: "-target-feature" "+zicsr" "-target-feature" "+zifencei"
-// MCPU-SIFIVE-S76: "-target-feature" "+64bit"
+// MCPU-SIFIVE-S76: "-target-feature" "+zicsr" "-target-feature" "+zifencei" "-target-feature" "+zihintpause"
+// MCPU-SIFIVE-S76: "-target-feature" "+xsfcie"
 // MCPU-SIFIVE-S76: "-target-abi" "lp64d"
 
 // mcpu with default march
@@ -128,7 +162,6 @@
 // MCPU-SIFIVE-U54: "-target-feature" "+m" "-target-feature" "+a" "-target-feature" "+f" "-target-feature" "+d"
 // MCPU-SIFIVE-U54: "-target-feature" "+c"
 // MCPU-SIFIVE-U54: "-target-feature" "+zicsr" "-target-feature" "+zifencei"
-// MCPU-SIFIVE-U54: "-target-feature" "+64bit"
 // MCPU-SIFIVE-U54: "-target-abi" "lp64d"
 
 // mcpu with mabi option
@@ -137,7 +170,6 @@
 // MCPU-ABI-SIFIVE-U54: "-target-feature" "+m" "-target-feature" "+a" "-target-feature" "+f" "-target-feature" "+d"
 // MCPU-ABI-SIFIVE-U54: "-target-feature" "+c"
 // MCPU-ABI-SIFIVE-U54: "-target-feature" "+zicsr" "-target-feature" "+zifencei"
-// MCPU-ABI-SIFIVE-U54: "-target-feature" "+64bit"
 // MCPU-ABI-SIFIVE-U54: "-target-abi" "lp64"
 
 // mcpu with default march
@@ -154,7 +186,6 @@
 // MCPU-ABI-SIFIVE-U74: "-target-feature" "+m" "-target-feature" "+a" "-target-feature" "+f" "-target-feature" "+d"
 // MCPU-ABI-SIFIVE-U74: "-target-feature" "+c"
 // MCPU-ABI-SIFIVE-U74: "-target-feature" "+zicsr" "-target-feature" "+zifencei"
-// MCPU-ABI-SIFIVE-U74: "-target-feature" "+64bit"
 // MCPU-ABI-SIFIVE-U74: "-target-abi" "lp64"
 
 // march overwrite mcpu's default march
@@ -177,13 +208,24 @@
 // MTUNE-E31-MCPU-E76-SAME: "-target-feature" "+zicsr" "-target-feature" "+zifencei"
 // MTUNE-E31-MCPU-E76-SAME: "-tune-cpu" "sifive-e76"
 
+// mcpu with default march include experimental extensions
+// RUN: %clang -target riscv64 -### -c %s 2>&1 -menable-experimental-extensions -mcpu=sifive-x280 | FileCheck -check-prefix=MCPU-SIFIVE-X280 %s
+// MCPU-SIFIVE-X280: "-nostdsysteminc" "-target-cpu" "sifive-x280"
+// MCPU-SIFIVE-X280-SAME: "-target-feature" "+m" "-target-feature" "+a" "-target-feature" "+f" "-target-feature" "+d"
+// MCPU-SIFIVE-X280-SAME: "-target-feature" "+c" "-target-feature" "+v"
+// MCPU-SIFIVE-X280-SAME: "-target-feature" "+zicsr" "-target-feature" "+zifencei"
+// MCPU-SIFIVE-X280-SAME: "-target-feature" "+zfh"
+// MCPU-SIFIVE-X280-SAME: "-target-feature" "+zba" "-target-feature" "+zbb"
+// MCPU-SIFIVE-X280-SAME: "-target-feature" "+zvfh"
+// MCPU-SIFIVE-X280-SAME: "-target-feature" "+zvl128b"
+// MCPU-SIFIVE-X280-SAME: "-target-feature" "+zvl256b" "-target-feature" "+zvl32b"
+// MCPU-SIFIVE-X280-SAME: "-target-feature" "+zvl512b" "-target-feature" "+zvl64b"
+// MCPU-SIFIVE-X280-SAME: "-target-abi" "lp64d"
+
 // Check failed cases
 
-// RUN: %clang --target=riscv32 -### -c %s 2>&1 -mcpu=generic-rv321 | FileCheck -check-prefix=FAIL-MCPU-NAME %s
+// RUN: not %clang --target=riscv32 -### -c %s 2>&1 -mcpu=generic-rv321 | FileCheck -check-prefix=FAIL-MCPU-NAME %s
 // FAIL-MCPU-NAME: error: unsupported argument 'generic-rv321' to option '-mcpu='
 
-// RUN: %clang --target=riscv32 -### -c %s 2>&1 -mcpu=generic-rv32 -march=rv64i | FileCheck -check-prefix=MISMATCH-ARCH %s
-// MISMATCH-ARCH: error: unsupported argument 'generic-rv32' to option '-mcpu='
-
-// RUN: %clang --target=riscv32 -### -c %s 2>&1 -mcpu=generic-rv64 | FileCheck -check-prefix=MISMATCH-MCPU %s
-// MISMATCH-MCPU: error: unsupported argument 'generic-rv64' to option '-mcpu='
+// RUN: not %clang --target=riscv32 -### -c %s 2>&1 -mcpu=generic-rv32 -march=rv64i | FileCheck -check-prefix=MISMATCH-ARCH %s
+// MISMATCH-ARCH: cpu 'generic-rv32' does not support rv64

@@ -57,6 +57,7 @@ bool WebAssemblyTargetInfo::hasFeature(StringRef Feature) const {
       .Case("tail-call", HasTailCall)
       .Case("reference-types", HasReferenceTypes)
       .Case("extended-const", HasExtendedConst)
+      .Case("multimemory", HasMultiMemory)
       .Case("mem-safety", HasMemSafety)
       .Default(false);
 }
@@ -97,6 +98,8 @@ void WebAssemblyTargetInfo::getTargetDefines(const LangOptions &Opts,
     Builder.defineMacro("__wasm_reference_types__");
   if (HasExtendedConst)
     Builder.defineMacro("__wasm_extended_const__");
+  if (HasMultiMemory)
+    Builder.defineMacro("__wasm_multimemory__");
   if (HasMemSafety)
     Builder.defineMacro("__wasm_mem_safety__");
 
@@ -154,6 +157,8 @@ bool WebAssemblyTargetInfo::initFeatureMap(
     Features["atomics"] = true;
     Features["mutable-globals"] = true;
     Features["tail-call"] = true;
+    Features["reference-types"] = true;
+    Features["multimemory"] = true;
     Features["mem-safety"] = true;
     setSIMDLevel(Features, SIMD128, true);
   } else if (CPU == "generic") {
@@ -261,6 +266,14 @@ bool WebAssemblyTargetInfo::handleTargetFeatures(
     }
     if (Feature == "-extended-const") {
       HasExtendedConst = false;
+      continue;
+    }
+    if (Feature == "+multimemory") {
+      HasMultiMemory = true;
+      continue;
+    }
+    if (Feature == "-multimemory") {
+      HasMultiMemory = false;
       continue;
     }
     if (Feature == "+mem-safety") {

@@ -1,5 +1,4 @@
 // RUN: %clang_cc1 -std=c++20 -verify %s
-// expected-no-diagnostics
 
 static constexpr int PRIMARY = 0;
 static constexpr int SPECIALIZATION_CONCEPT = 1;
@@ -227,7 +226,9 @@ namespace constrained_member_sfinae {
 
 template<int N> struct S {
   template<class T>
-  static constexpr int constrained_method() requires (sizeof(int[N * 1073741824 + 4]) == 16) {
+  static constexpr int constrained_method() requires (sizeof(int[N * 1073741824 + 4]) == 16) { // expected-warning {{variable length arrays in C++ are a Clang extension}} \
+                                                                                                  expected-note {{value 4294967296 is outside the range of representable values of type 'int'}} \
+                                                                                                  expected-note {{while calculating associated constraint of template 'constrained_method' here}}
     return CONSTRAINED_METHOD_1;
   }
 
@@ -277,3 +278,229 @@ static_assert(S<int>().constrained_method() == CONSTRAINED_METHOD_1);
 static_assert(S<XY>().constrained_method() == CONSTRAINED_METHOD_2);
 
 } // namespace requires_expression_references_members
+
+namespace GH60231 {
+
+template<typename T0> concept C = true;
+
+template <typename T1>
+struct S {
+  template <typename F1> requires C<S<T1>>
+  void foo1(F1 f);
+
+  template <typename F2>
+  void foo2(F2 f) requires C<S<T1>>;
+
+  template <typename F3> requires C<F3>
+  void foo3(F3 f);
+};
+
+template <typename T2>
+template <typename F4> requires C<S<T2>>
+void S<T2>::foo1(F4 f) {}
+
+template <typename T3>
+template <typename F5>
+void S<T3>::foo2(F5 f) requires C<S<T3>> {}
+
+template <typename T4>
+template <typename F6> requires C<F6>
+void S<T4>::foo3(F6 f) {}
+
+} // namespace GH60231
+
+namespace GH62003 {
+
+template <typename T0> concept Concept = true;
+
+template <class T1>
+struct S1 {
+  template <Concept C1>
+  static constexpr int foo();
+};
+template <class T2>
+template <Concept C2>
+constexpr int S1<T2>::foo() { return 1; }
+
+template <Concept C3>
+struct S2 {
+  template <class T3>
+  static constexpr int foo();
+};
+template <Concept C4>
+template <class T4>
+constexpr int S2<C4>::foo() { return 2; }
+
+template <Concept C5>
+struct S3 {
+  template <Concept C6>
+  static constexpr int foo();
+};
+template <Concept C7>
+template <Concept C8>
+constexpr int S3<C7>::foo() { return 3; }
+
+static_assert(S1<int>::foo<int>() == 1);
+static_assert(S2<int>::foo<int>() == 2);
+static_assert(S3<int>::foo<int>() == 3);
+
+} // namespace GH62003
+
+namespace MultilevelTemplateWithPartialSpecialization {
+template <typename>
+concept Concept = true;
+
+namespace two_level {
+template <typename T1, int>
+struct W0 {
+  template <typename T2>
+  requires (Concept<T2>)
+  void f(const T2 &);
+};
+
+template <typename T3>
+struct W0<T3, 0> {
+  template <typename T4>
+  requires (Concept<T4>)
+  void f(const T4 &);
+};
+
+template <typename T3>
+template <typename T4>
+requires (Concept<T4>)
+inline void W0<T3, 0>::f(const T4 &) {}
+} // namespace two_level
+
+namespace three_level {
+template <typename T1, int>
+struct W0 {
+  template <typename T2>
+  struct W1 {
+    template <typename T3>
+    requires (Concept<T3>)
+    void f(const T3 &);
+  };
+};
+
+template <typename T4>
+struct W0<T4, 0> {
+  template <typename T5>
+  struct W1 {
+    template <typename T6>
+    requires (Concept<T6>)
+    void f(const T6 &);
+  };
+};
+
+template <typename T7>
+template <typename T8>
+template <typename T9>
+requires (Concept<T9>)
+inline void W0<T7, 0>::W1<T8>::f(const T9 &) {}
+} // namespace three_level
+
+} // namespace MultilevelTemplateWithPartialSpecialization
+
+namespace PR62697 {
+template<typename>
+concept c = true;
+
+template<typename T>
+struct s {
+    void f() requires c<void(T)>;
+};
+
+template<typename T>
+void s<T>::f() requires c<void(T)> { }
+}
+
+namespace GH62272 {
+template<typename T> concept A = true;
+template<typename T> struct X { A<T> auto f(); };
+template<typename T> A<T> auto X<T>::f() {}
+}
+
+namespace GH65810 {
+template<typename Param>
+concept TrivialConcept =
+requires(Param param) {
+  (void)param;
+};
+
+template <typename T>
+struct Base {
+  class InnerClass;
+};
+
+template <typename T>
+class Base<T>::InnerClass {
+  template <typename Param>
+    requires TrivialConcept<Param>
+    int func(Param param) const;
+};
+
+template <typename T>
+template <typename Param>
+requires TrivialConcept<Param>
+int Base<T>::InnerClass::func(Param param) const {
+  return 0;
+}
+
+template<typename T>
+struct Outermost {
+  struct Middle {
+    template<typename U>
+    struct Innermost {
+      template <typename Param>
+        requires TrivialConcept<Param>
+        int func(Param param) const;
+    };
+  };
+};
+
+template <typename T>
+template <typename U>
+template <typename Param>
+requires TrivialConcept<Param>
+int Outermost<T>::Middle::Innermost<U>::func(Param param) const {
+  return 0;
+}
+
+} // namespace GH65810
+
+namespace GH61763 {
+template<typename T, typename U>
+concept same_as = true;
+
+template <class = void>
+struct Foo {
+      template <same_as<void> Param>
+            friend struct Bar;
+};
+
+template struct Foo<>;
+
+template <same_as<void> Param>
+struct Bar {
+};
+
+
+template<typename T>
+concept ok = true;
+
+struct outer {
+    template<typename T>
+        requires ok<T>
+          struct foo {};
+};
+
+template<typename U>
+struct bar {
+    template<typename T>
+        requires ok<T>
+          friend struct outer::foo;
+};
+
+bar<int> x;
+} // namespace GH61763
+

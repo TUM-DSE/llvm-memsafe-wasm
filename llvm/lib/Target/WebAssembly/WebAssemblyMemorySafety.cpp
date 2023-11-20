@@ -266,53 +266,51 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
 
   auto SafeAlignedAllocFn = F.getParent()->getOrInsertFunction(
       "__wasm_memsafety_aligned_alloc",
-      FunctionType::get(PointerType::getInt8PtrTy(Ctx),
+      FunctionType::get(PointerType::get(Ctx, 0),
                         {
                             Type::getInt64Ty(Ctx),
                             Type::getInt64Ty(Ctx),
                         },
                         false));
   auto SafeMallocFn = F.getParent()->getOrInsertFunction(
-      "__wasm_memsafety_malloc",
-      FunctionType::get(PointerType::getInt8PtrTy(Ctx),
-                        {
-                            Type::getInt64Ty(Ctx),
-                        },
-                        false));
+      "__wasm_memsafety_malloc", FunctionType::get(PointerType::get(Ctx, 0),
+                                                   {
+                                                       Type::getInt64Ty(Ctx),
+                                                   },
+                                                   false));
   auto SafeCallocFn = F.getParent()->getOrInsertFunction(
-      "__wasm_memsafety_calloc",
-      FunctionType::get(PointerType::getInt8PtrTy(Ctx),
-                        {
-                            Type::getInt64Ty(Ctx),
-                            Type::getInt64Ty(Ctx),
-                        },
-                        false));
+      "__wasm_memsafety_calloc", FunctionType::get(PointerType::get(Ctx, 0),
+                                                   {
+                                                       Type::getInt64Ty(Ctx),
+                                                       Type::getInt64Ty(Ctx),
+                                                   },
+                                                   false));
   auto SafeReallocFn = F.getParent()->getOrInsertFunction(
       "__wasm_memsafety_realloc",
-      FunctionType::get(PointerType::getInt8PtrTy(Ctx),
+      FunctionType::get(PointerType::get(Ctx, 0),
                         {
-                            Type::getInt8PtrTy(Ctx),
+                            PointerType::get(Ctx, 0),
                             Type::getInt64Ty(Ctx),
                         },
                         false));
   auto SafeFreeFn = F.getParent()->getOrInsertFunction(
       "__wasm_memsafety_free", FunctionType::get(Type::getVoidTy(Ctx),
                                                  {
-                                                     Type::getInt8PtrTy(Ctx),
+                                                     PointerType::get(Ctx, 0),
                                                  },
                                                  false));
   auto SafePosixMemalignFn = F.getParent()->getOrInsertFunction(
       "__wasm_memsafety_posix_memalign",
       FunctionType::get(Type::getInt32Ty(Ctx),
                         {
-                            Type::getInt8PtrTy(Ctx)->getPointerTo(),
+                            PointerType::get(Ctx, 0),
                             Type::getInt64Ty(Ctx),
                             Type::getInt64Ty(Ctx),
                         },
                         false));
   auto SafeUsableSizeFn = F.getParent()->getOrInsertFunction(
       "__wasm_memsafety_malloc_usable_size",
-      FunctionType::get(Type::getInt64Ty(Ctx), {Type::getInt8PtrTy(Ctx)},
+      FunctionType::get(Type::getInt64Ty(Ctx), {PointerType::get(Ctx, 0)},
                         false));
 
   for (auto [AllocKind, Call] : CallsToAllocFunctions) {

@@ -332,7 +332,7 @@ protected:
 
           ExecutionContext exe_ctx(thread_sp->GetStackFrameAtIndex(0));
           Process *process = exe_ctx.GetProcessPtr();
-          if (process->GetModIDRef().IsLastResumeForUserExpression()) {
+          if (process->GetModIDRef().IsRunningExpression()) {
             // If we are in the middle of evaluating an expression, don't run
             // asynchronous breakpoint commands or expressions.  That could
             // lead to infinite recursion if the command or condition re-calls
@@ -666,9 +666,8 @@ public:
     WatchpointSP watchpoint_sp;
   };
 
-  StopInfoWatchpoint(Thread &thread, break_id_t watch_id,
-                     lldb::addr_t watch_hit_addr)
-      : StopInfo(thread, watch_id), m_watch_hit_addr(watch_hit_addr) {}
+  StopInfoWatchpoint(Thread &thread, break_id_t watch_id, bool silently_skip_wp)
+      : StopInfo(thread, watch_id), m_silently_skip_wp(silently_skip_wp) {}
 
   ~StopInfoWatchpoint() override = default;
 
@@ -700,7 +699,6 @@ protected:
                                     eVoteNoOpinion),
           m_stop_info_sp(stop_info_sp), m_watch_sp(watch_sp) {
       assert(watch_sp);
-      m_watch_index = watch_sp->GetHardwareIndex();
     }
 
     bool DoWillResume(lldb::StateType resume_state,
@@ -754,13 +752,11 @@ protected:
         return;
       m_did_disable_wp = true;
       GetThread().GetProcess()->EnableWatchpoint(m_watch_sp.get(), true);
-      m_watch_sp->SetHardwareIndex(m_watch_index);
     }
 
   private:
     StopInfoWatchpointSP m_stop_info_sp;
     WatchpointSP m_watch_sp;
-    uint32_t m_watch_index = LLDB_INVALID_INDEX32;
     bool m_did_disable_wp = false;
   };
 
@@ -893,27 +889,9 @@ protected:
 
         WatchpointSentry sentry(process_sp, wp_sp);
 
-        /*
-         * MIPS: Last 3bits of the watchpoint address are masked by the kernel.
-         * For example:
-         * 'n' is at 0x120010d00 and 'm' is 0x120010d04. When a watchpoint is
-         * set at 'm', then
-         * watch exception is generated even when 'n' is read/written. To handle
-         * this case,
-         * server emulates the instruction at PC and finds the base address of
-         * the load/store
-         * instruction and appends it in the description of the stop-info
-         * packet. If watchpoint
-         * is not set on this address by user then this do not stop.
-        */
-        if (m_watch_hit_addr != LLDB_INVALID_ADDRESS) {
-          WatchpointSP wp_hit_sp =
-              thread_sp->CalculateTarget()->GetWatchpointList().FindByAddress(
-                  m_watch_hit_addr);
-          if (!wp_hit_sp) {
-            m_should_stop = false;
-            wp_sp->IncrementFalseAlarmsAndReviseHitCount();
-          }
+        if (m_silently_skip_wp) {
+          m_should_stop = false;
+          wp_sp->UndoHitCount();
         }
 
         if (wp_sp->GetHitCount() <= wp_sp->GetIgnoreCount()) {
@@ -1001,6 +979,12 @@ protected:
             m_should_stop = false;
           }
         }
+
+        // Don't stop if the watched region value is unmodified, and
+        // this is a Modify-type watchpoint.
+        if (m_should_stop && !wp_sp->WatchedValueReportable(exe_ctx))
+          m_should_stop = false;
+
         // Finally, if we are going to stop, print out the new & old values:
         if (m_should_stop) {
           wp_sp->CaptureWatchedValue(exe_ctx);
@@ -1035,7 +1019,17 @@ private:
   
   bool m_should_stop = false;
   bool m_should_stop_is_valid = false;
-  lldb::addr_t m_watch_hit_addr;
+  // A false watchpoint hit has happened -
+  // the thread stopped with a watchpoint
+  // hit notification, but the watched region
+  // was not actually accessed (as determined
+  // by the gdb stub we're talking to).
+  // Continue past this watchpoint without
+  // notifying the user; on some targets this
+  // may mean disable wp, instruction step,
+  // re-enable wp, continue.
+  // On others, just continue.
+  bool m_silently_skip_wp = false;
   bool m_step_over_plan_complete = false;
   bool m_using_step_over_plan = false;
 };
@@ -1076,9 +1070,9 @@ public:
           thread_sp->GetProcess()->GetUnixSignals()->GetShouldNotify(m_value);
       if (should_notify) {
         StreamString strm;
-        strm.Printf(
-            "thread %d received signal: %s", thread_sp->GetIndexID(),
-            thread_sp->GetProcess()->GetUnixSignals()->GetSignalAsCString(
+        strm.Format(
+            "thread {0:d} received signal: {1}", thread_sp->GetIndexID(),
+            thread_sp->GetProcess()->GetUnixSignals()->GetSignalAsStringRef(
                 m_value));
         Process::ProcessEventData::AddRestartedReason(event_ptr,
                                                       strm.GetData());
@@ -1372,10 +1366,11 @@ StopInfoSP StopInfo::CreateStopReasonWithBreakpointSiteID(Thread &thread,
   return StopInfoSP(new StopInfoBreakpoint(thread, break_id, should_stop));
 }
 
-StopInfoSP
-StopInfo::CreateStopReasonWithWatchpointID(Thread &thread, break_id_t watch_id,
-                                           lldb::addr_t watch_hit_addr) {
-  return StopInfoSP(new StopInfoWatchpoint(thread, watch_id, watch_hit_addr));
+StopInfoSP StopInfo::CreateStopReasonWithWatchpointID(Thread &thread,
+                                                      break_id_t watch_id,
+                                                      bool silently_continue) {
+  return StopInfoSP(
+      new StopInfoWatchpoint(thread, watch_id, silently_continue));
 }
 
 StopInfoSP StopInfo::CreateStopReasonWithSignal(Thread &thread, int signo,
@@ -1464,7 +1459,8 @@ StopInfo::GetCrashingDereference(StopInfoSP &stop_info_sp,
     return ValueObjectSP();
   }
 
-  StackFrameSP frame_sp = thread_sp->GetSelectedFrame();
+  StackFrameSP frame_sp =
+      thread_sp->GetSelectedFrame(DoNoSelectMostRelevantFrame);
 
   if (!frame_sp) {
     return ValueObjectSP();
