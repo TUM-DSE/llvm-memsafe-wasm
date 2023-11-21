@@ -175,7 +175,7 @@ public:
 private:
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
-    AU.addRequiredTransitive<TargetLibraryInfoWrapperPass>();
+//    AU.addRequiredTransitive<TargetLibraryInfoWrapperPass>();
   }
 
   Value *alignAllocSize(Value *AllocSize, Instruction *InsertBefore) {
@@ -192,25 +192,25 @@ private:
   }
 };
 
-// A flattened (each option contains no more "hidden" options through a bitmap)
-// version of AllocKind. This contains all AllocKind's that C supports, so if we
-// ever want to support more languages, we would have to extend this.
-enum class FlattenedAllocKind {
-  // Alloc + Uninitialized + Aligned
-  AlignedAlloc,
-  // Alloc + Uninitialized
-  Malloc,
-  // Alloc + Zeroed
-  Calloc,
-  // Realloc
-  Realloc,
-  // Free
-  Free,
-  // posix_memalign function
-  PosixMemalign,
-  // malloc_usable_size function
-  MallocUsableSize,
-};
+//// A flattened (each option contains no more "hidden" options through a bitmap)
+//// version of AllocKind. This contains all AllocKind's that C supports, so if we
+//// ever want to support more languages, we would have to extend this.
+//enum class FlattenedAllocKind {
+//  // Alloc + Uninitialized + Aligned
+//  AlignedAlloc,
+//  // Alloc + Uninitialized
+//  Malloc,
+//  // Alloc + Zeroed
+//  Calloc,
+//  // Realloc
+//  Realloc,
+//  // Free
+//  Free,
+//  // posix_memalign function
+//  PosixMemalign,
+//  // malloc_usable_size function
+//  MallocUsableSize,
+//};
 
 bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
   if (!F.hasFnAttribute(Attribute::SanitizeWasmMemSafety) ||
@@ -221,8 +221,8 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
   LLVMContext &Ctx(F.getContext());
 
   SmallVector<AllocaInst *, 8> AllocaInsts;
-  SmallVector<std::pair<FlattenedAllocKind, CallInst *>, 8>
-      CallsToAllocFunctions;
+//  SmallVector<std::pair<FlattenedAllocKind, CallInst *>, 8>
+//      CallsToAllocFunctions;
 
   for (auto &BB : F) {
     for (auto &I : BB) {
@@ -235,138 +235,138 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
           AllocaInsts.emplace_back(Alloca);
         }
       }
-      if (auto *Call = dyn_cast<CallInst>(&I)) {
-        auto *CalledFunction = Call->getCalledFunction();
-
-        if (!CalledFunction->hasName()) {
-          continue;
-        }
-
-        if (CalledFunction->getName() == "malloc") {
-          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::Malloc, Call);
-        } else if (CalledFunction->getName() == "calloc") {
-          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::Calloc, Call);
-        } else if (CalledFunction->getName() == "realloc") {
-          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::Realloc, Call);
-        } else if (CalledFunction->getName() == "aligned_alloc") {
-          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::AlignedAlloc,
-                                             Call);
-        } else if (CalledFunction->getName() == "free") {
-          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::Free, Call);
-        } else if (CalledFunction->getName() == "posix_memalign") {
-          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::PosixMemalign,
-                                             Call);
-        } else if (CalledFunction->getName() == "malloc_usable_size") {
-          CallsToAllocFunctions.emplace_back(
-              FlattenedAllocKind::MallocUsableSize, Call);
-        }
-      }
+//      if (auto *Call = dyn_cast<CallInst>(&I)) {
+//        auto *CalledFunction = Call->getCalledFunction();
+//
+//        if (!CalledFunction->hasName()) {
+//          continue;
+//        }
+//
+//        if (CalledFunction->getName() == "malloc") {
+//          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::Malloc, Call);
+//        } else if (CalledFunction->getName() == "calloc") {
+//          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::Calloc, Call);
+//        } else if (CalledFunction->getName() == "realloc") {
+//          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::Realloc, Call);
+//        } else if (CalledFunction->getName() == "aligned_alloc") {
+//          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::AlignedAlloc,
+//                                             Call);
+//        } else if (CalledFunction->getName() == "free") {
+//          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::Free, Call);
+//        } else if (CalledFunction->getName() == "posix_memalign") {
+//          CallsToAllocFunctions.emplace_back(FlattenedAllocKind::PosixMemalign,
+//                                             Call);
+//        } else if (CalledFunction->getName() == "malloc_usable_size") {
+//          CallsToAllocFunctions.emplace_back(
+//              FlattenedAllocKind::MallocUsableSize, Call);
+//        }
+//      }
     }
   }
 
-  auto SafeAlignedAllocFn = F.getParent()->getOrInsertFunction(
-      "__wasm_memsafety_aligned_alloc",
-      FunctionType::get(PointerType::get(Ctx, 0),
-                        {
-                            Type::getInt64Ty(Ctx),
-                            Type::getInt64Ty(Ctx),
-                        },
-                        false));
-  auto SafeMallocFn = F.getParent()->getOrInsertFunction(
-      "__wasm_memsafety_malloc", FunctionType::get(PointerType::get(Ctx, 0),
-                                                   {
-                                                       Type::getInt64Ty(Ctx),
-                                                   },
-                                                   false));
-  auto SafeCallocFn = F.getParent()->getOrInsertFunction(
-      "__wasm_memsafety_calloc", FunctionType::get(PointerType::get(Ctx, 0),
-                                                   {
-                                                       Type::getInt64Ty(Ctx),
-                                                       Type::getInt64Ty(Ctx),
-                                                   },
-                                                   false));
-  auto SafeReallocFn = F.getParent()->getOrInsertFunction(
-      "__wasm_memsafety_realloc",
-      FunctionType::get(PointerType::get(Ctx, 0),
-                        {
-                            PointerType::get(Ctx, 0),
-                            Type::getInt64Ty(Ctx),
-                        },
-                        false));
-  auto SafeFreeFn = F.getParent()->getOrInsertFunction(
-      "__wasm_memsafety_free", FunctionType::get(Type::getVoidTy(Ctx),
-                                                 {
-                                                     PointerType::get(Ctx, 0),
-                                                 },
-                                                 false));
-  auto SafePosixMemalignFn = F.getParent()->getOrInsertFunction(
-      "__wasm_memsafety_posix_memalign",
-      FunctionType::get(Type::getInt32Ty(Ctx),
-                        {
-                            PointerType::get(Ctx, 0),
-                            Type::getInt64Ty(Ctx),
-                            Type::getInt64Ty(Ctx),
-                        },
-                        false));
-  auto SafeUsableSizeFn = F.getParent()->getOrInsertFunction(
-      "__wasm_memsafety_malloc_usable_size",
-      FunctionType::get(Type::getInt64Ty(Ctx), {PointerType::get(Ctx, 0)},
-                        false));
+//  auto SafeAlignedAllocFn = F.getParent()->getOrInsertFunction(
+//      "__wasm_memsafety_aligned_alloc",
+//      FunctionType::get(PointerType::get(Ctx, 0),
+//                        {
+//                            Type::getInt64Ty(Ctx),
+//                            Type::getInt64Ty(Ctx),
+//                        },
+//                        false));
+//  auto SafeMallocFn = F.getParent()->getOrInsertFunction(
+//      "__wasm_memsafety_malloc", FunctionType::get(PointerType::get(Ctx, 0),
+//                                                   {
+//                                                       Type::getInt64Ty(Ctx),
+//                                                   },
+//                                                   false));
+//  auto SafeCallocFn = F.getParent()->getOrInsertFunction(
+//      "__wasm_memsafety_calloc", FunctionType::get(PointerType::get(Ctx, 0),
+//                                                   {
+//                                                       Type::getInt64Ty(Ctx),
+//                                                       Type::getInt64Ty(Ctx),
+//                                                   },
+//                                                   false));
+//  auto SafeReallocFn = F.getParent()->getOrInsertFunction(
+//      "__wasm_memsafety_realloc",
+//      FunctionType::get(PointerType::get(Ctx, 0),
+//                        {
+//                            PointerType::get(Ctx, 0),
+//                            Type::getInt64Ty(Ctx),
+//                        },
+//                        false));
+//  auto SafeFreeFn = F.getParent()->getOrInsertFunction(
+//      "__wasm_memsafety_free", FunctionType::get(Type::getVoidTy(Ctx),
+//                                                 {
+//                                                     PointerType::get(Ctx, 0),
+//                                                 },
+//                                                 false));
+//  auto SafePosixMemalignFn = F.getParent()->getOrInsertFunction(
+//      "__wasm_memsafety_posix_memalign",
+//      FunctionType::get(Type::getInt32Ty(Ctx),
+//                        {
+//                            PointerType::get(Ctx, 0),
+//                            Type::getInt64Ty(Ctx),
+//                            Type::getInt64Ty(Ctx),
+//                        },
+//                        false));
+//  auto SafeUsableSizeFn = F.getParent()->getOrInsertFunction(
+//      "__wasm_memsafety_malloc_usable_size",
+//      FunctionType::get(Type::getInt64Ty(Ctx), {PointerType::get(Ctx, 0)},
+//                        false));
 
-  for (auto [AllocKind, Call] : CallsToAllocFunctions) {
-    switch (AllocKind) {
-    case FlattenedAllocKind::AlignedAlloc: {
-      auto *NewCall = CallInst::Create(
-          SafeAlignedAllocFn, {Call->getArgOperand(0), Call->getArgOperand(1)},
-          Call->getName(), Call);
-      Call->replaceAllUsesWith(NewCall);
-      break;
-    }
-    case FlattenedAllocKind::Malloc: {
-      auto *NewCall = CallInst::Create(SafeMallocFn, {Call->getArgOperand(0)},
-                                       Call->getName(), Call);
-      Call->replaceAllUsesWith(NewCall);
-      break;
-    }
-    case FlattenedAllocKind::Realloc: {
-      auto *NewCall = CallInst::Create(
-          SafeReallocFn, {Call->getArgOperand(0), Call->getArgOperand(1)},
-          Call->getName(), Call);
-      Call->replaceAllUsesWith(NewCall);
-      break;
-    }
-    case FlattenedAllocKind::Calloc: {
-      auto *NewCall = CallInst::Create(
-          SafeCallocFn, {Call->getArgOperand(0), Call->getArgOperand(1)},
-          Call->getName(), Call);
-      Call->replaceAllUsesWith(NewCall);
-      break;
-    }
-    case FlattenedAllocKind::Free: {
-      CallInst::Create(SafeFreeFn, {Call->getArgOperand(0)}, Call->getName(),
-                       Call);
-      break;
-    }
-    case FlattenedAllocKind::PosixMemalign: {
-      auto *NewCall = CallInst::Create(SafePosixMemalignFn,
-                                       {
-                                           Call->getArgOperand(0),
-                                           Call->getArgOperand(1),
-                                           Call->getArgOperand(2),
-                                       },
-                                       Call->getName(), Call);
-      Call->replaceAllUsesWith(NewCall);
-      break;
-    }
-    case FlattenedAllocKind::MallocUsableSize: {
-      auto *NewCall = CallInst::Create(
-          SafeUsableSizeFn, {Call->getArgOperand(0)}, Call->getName(), Call);
-      Call->replaceAllUsesWith(NewCall);
-      break;
-    }
-    }
-    Call->eraseFromParent();
-  }
+//  for (auto [AllocKind, Call] : CallsToAllocFunctions) {
+//    switch (AllocKind) {
+//    case FlattenedAllocKind::AlignedAlloc: {
+//      auto *NewCall = CallInst::Create(
+//          SafeAlignedAllocFn, {Call->getArgOperand(0), Call->getArgOperand(1)},
+//          Call->getName(), Call);
+//      Call->replaceAllUsesWith(NewCall);
+//      break;
+//    }
+//    case FlattenedAllocKind::Malloc: {
+//      auto *NewCall = CallInst::Create(SafeMallocFn, {Call->getArgOperand(0)},
+//                                       Call->getName(), Call);
+//      Call->replaceAllUsesWith(NewCall);
+//      break;
+//    }
+//    case FlattenedAllocKind::Realloc: {
+//      auto *NewCall = CallInst::Create(
+//          SafeReallocFn, {Call->getArgOperand(0), Call->getArgOperand(1)},
+//          Call->getName(), Call);
+//      Call->replaceAllUsesWith(NewCall);
+//      break;
+//    }
+//    case FlattenedAllocKind::Calloc: {
+//      auto *NewCall = CallInst::Create(
+//          SafeCallocFn, {Call->getArgOperand(0), Call->getArgOperand(1)},
+//          Call->getName(), Call);
+//      Call->replaceAllUsesWith(NewCall);
+//      break;
+//    }
+//    case FlattenedAllocKind::Free: {
+//      CallInst::Create(SafeFreeFn, {Call->getArgOperand(0)}, Call->getName(),
+//                       Call);
+//      break;
+//    }
+//    case FlattenedAllocKind::PosixMemalign: {
+//      auto *NewCall = CallInst::Create(SafePosixMemalignFn,
+//                                       {
+//                                           Call->getArgOperand(0),
+//                                           Call->getArgOperand(1),
+//                                           Call->getArgOperand(2),
+//                                       },
+//                                       Call->getName(), Call);
+//      Call->replaceAllUsesWith(NewCall);
+//      break;
+//    }
+//    case FlattenedAllocKind::MallocUsableSize: {
+//      auto *NewCall = CallInst::Create(
+//          SafeUsableSizeFn, {Call->getArgOperand(0)}, Call->getName(), Call);
+//      Call->replaceAllUsesWith(NewCall);
+//      break;
+//    }
+//    }
+//    Call->eraseFromParent();
+//  }
 
   DominatorTree DT(F);
   auto *NewSegmentStackFunc =
