@@ -1390,7 +1390,7 @@ endif()
 ExternalProject_Add(
     libclang_rt_builtins-64
     PREFIX lib/clang
-    SOURCE_DIR lib/clang/17/lib
+    SOURCE_DIR lib/clang/18/lib
     URL https://github.com/martin-fink/wasi-sdk/releases/download/wasi-sdk-20%2Bmemory64/libclang_rt.builtins-wasm64-wasi-20.7g0de66a9eb0d7.tar.gz
     URL_HASH SHA512=bab3ebd7ca89e2aba9f81d609f86306158612e83c5cdef82dec24eb2e1d2c7d4d501f0fe15654d1fc639402f8df56864385898c3df0376cc2bd874e903ad599c
     CONFIGURE_COMMAND ""
