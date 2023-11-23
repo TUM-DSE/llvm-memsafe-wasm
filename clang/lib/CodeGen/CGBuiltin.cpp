@@ -19851,6 +19851,21 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
     Value *Size = EmitScalarExpr(E->getArg(1));
     return Builder.CreateCall(Callee, {Ptr, Size});
   }
+  case WebAssembly::BI__builtin_wasm_untag_ptr: {
+    llvm::Type *IntTy = llvm::Type::getInt64Ty(Builder.getContext());
+    Value *Ptr = EmitScalarExpr(E->getArg(0));
+    Value *IntPtr = Builder.CreateIntToPtr(Ptr, IntTy);
+    Value *BitMask = llvm::ConstantInt::get(IntTy, 0x0000'FFFF'FFFF'FFFF, false);
+    Value *StrippedPtr = Builder.CreateBinOp(llvm::Instruction::BinaryOps::And, IntPtr, BitMask);
+    return Builder.CreateIntToPtr(StrippedPtr, ConvertType(E->getType()));
+  }
+  case WebAssembly::BI__builtin_wasm_segment_set_tag: {
+    Value *Ptr = EmitScalarExpr(E->getArg(0));
+    Value *Tag = EmitScalarExpr(E->getArg(1));
+    Value *Size = EmitScalarExpr(E->getArg(2));
+    Function *Callee = CGM.getIntrinsic(Intrinsic::wasm_segment_set_tag);
+    return Builder.CreateCall(Callee, {Ptr, Tag, Size});
+  }
   case WebAssembly::BI__builtin_wasm_throw: {
     Value *Tag = EmitScalarExpr(E->getArg(0));
     Value *Obj = EmitScalarExpr(E->getArg(1));

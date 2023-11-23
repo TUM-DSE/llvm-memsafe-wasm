@@ -40,6 +40,8 @@ BUILTIN(__builtin_wasm_max_f64, "ddd", "nc")
 
 BUILTIN(__builtin_wasm_segment_new, "v*v*z", "n")
 BUILTIN(__builtin_wasm_segment_free, "vv*z", "n")
+BUILTIN(__builtin_wasm_segment_set_tag, "vv*v*z", "n")
+BUILTIN(__builtin_wasm_untag_ptr, "v*v*", "n")
 
 // Exception handling builtins.
 TARGET_BUILTIN(__builtin_wasm_throw, "vIUiv*", "r", "exception-handling")
