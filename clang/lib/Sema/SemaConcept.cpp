@@ -10,19 +10,22 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "TreeTransform.h"
 #include "clang/Sema/SemaConcept.h"
-#include "clang/Sema/Sema.h"
-#include "clang/Sema/SemaInternal.h"
-#include "clang/Sema/SemaDiagnostic.h"
-#include "clang/Sema/TemplateDeduction.h"
-#include "clang/Sema/Template.h"
-#include "clang/Sema/Overload.h"
-#include "clang/Sema/Initialization.h"
+#include "TreeTransform.h"
 #include "clang/AST/ASTLambda.h"
+#include "clang/AST/DeclCXX.h"
 #include "clang/AST/ExprConcepts.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/Basic/OperatorPrecedence.h"
+#include "clang/Sema/EnterExpressionEvaluationContext.h"
+#include "clang/Sema/Initialization.h"
+#include "clang/Sema/Overload.h"
+#include "clang/Sema/ScopeInfo.h"
+#include "clang/Sema/Sema.h"
+#include "clang/Sema/SemaDiagnostic.h"
+#include "clang/Sema/SemaInternal.h"
+#include "clang/Sema/Template.h"
+#include "clang/Sema/TemplateDeduction.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/StringExtras.h"
@@ -160,7 +163,7 @@ struct SatisfactionStackRAII {
   Sema &SemaRef;
   bool Inserted = false;
   SatisfactionStackRAII(Sema &SemaRef, const NamedDecl *ND,
-                        llvm::FoldingSetNodeID FSNID)
+                        const llvm::FoldingSetNodeID &FSNID)
       : SemaRef(SemaRef) {
       if (ND) {
       SemaRef.PushSatisfactionStackEntry(ND, FSNID);
@@ -182,6 +185,7 @@ calculateConstraintSatisfaction(Sema &S, const Expr *ConstraintExpr,
   ConstraintExpr = ConstraintExpr->IgnoreParenImpCasts();
 
   if (LogicalBinOp BO = ConstraintExpr) {
+    size_t EffectiveDetailEndIndex = Satisfaction.Details.size();
     ExprResult LHSRes = calculateConstraintSatisfaction(
         S, BO.getLHS(), Satisfaction, Evaluator);
 
@@ -214,6 +218,22 @@ calculateConstraintSatisfaction(Sema &S, const Expr *ConstraintExpr,
         S, BO.getRHS(), Satisfaction, std::forward<AtomicEvaluator>(Evaluator));
     if (RHSRes.isInvalid())
       return ExprError();
+
+    bool IsRHSSatisfied = Satisfaction.IsSatisfied;
+    // Current implementation adds diagnostic information about the falsity
+    // of each false atomic constraint expression when it evaluates them.
+    // When the evaluation results to `false || true`, the information
+    // generated during the evaluation of left-hand side is meaningless
+    // because the whole expression evaluates to true.
+    // The following code removes the irrelevant diagnostic information.
+    // FIXME: We should probably delay the addition of diagnostic information
+    // until we know the entire expression is false.
+    if (BO.isOr() && IsRHSSatisfied) {
+      auto EffectiveDetailEnd = Satisfaction.Details.begin();
+      std::advance(EffectiveDetailEnd, EffectiveDetailEndIndex);
+      Satisfaction.Details.erase(EffectiveDetailEnd,
+                                 Satisfaction.Details.end());
+    }
 
     return BO.recreateBinOp(S, LHSRes, RHSRes);
   }
@@ -259,9 +279,6 @@ calculateConstraintSatisfaction(Sema &S, const Expr *ConstraintExpr,
             StringRef(Mem, MessageSize)});
     return SubstitutedAtomicExpr;
   }
-
-  if (SubstitutedAtomicExpr.get()->isValueDependent())
-    return SubstitutedAtomicExpr;
 
   EnterExpressionEvaluationContext ConstantEvaluated(
       S, Sema::ExpressionEvaluationContext::ConstantEvaluated);
@@ -542,11 +559,6 @@ bool Sema::addInstantiatedCapturesToScope(
   auto AddSingleCapture = [&](const ValueDecl *CapturedPattern,
                               unsigned Index) {
     ValueDecl *CapturedVar = LambdaClass->getCapture(Index)->getCapturedVar();
-    if (cast<CXXMethodDecl>(Function)->isConst()) {
-      QualType T = CapturedVar->getType();
-      T.addConst();
-      CapturedVar->setType(T);
-    }
     if (CapturedVar->isInitCapture())
       Scope.InstantiatedLocal(CapturedPattern, CapturedVar);
   };
@@ -605,11 +617,6 @@ bool Sema::SetupConstraintScope(
       if (addInstantiatedParametersToScope(FD, FromMemTempl->getTemplatedDecl(),
                                            Scope, MLTAL))
         return true;
-      // Make sure the captures are also added to the instantiation scope.
-      if (isLambdaCallOperator(FD) &&
-          addInstantiatedCapturesToScope(FD, FromMemTempl->getTemplatedDecl(),
-                                         Scope, MLTAL))
-        return true;
     }
 
     return false;
@@ -634,11 +641,6 @@ bool Sema::SetupConstraintScope(
     // child-function.
     if (addInstantiatedParametersToScope(FD, InstantiatedFrom, Scope, MLTAL))
       return true;
-
-    // Make sure the captures are also added to the instantiation scope.
-    if (isLambdaCallOperator(FD) &&
-        addInstantiatedCapturesToScope(FD, InstantiatedFrom, Scope, MLTAL))
-      return true;
   }
 
   return false;
@@ -655,11 +657,11 @@ Sema::SetupConstraintCheckingTemplateArgumentsAndScope(
   // Collect the list of template arguments relative to the 'primary' template.
   // We need the entire list, since the constraint is completely uninstantiated
   // at this point.
-  MLTAL =
-      getTemplateInstantiationArgs(FD, /*Final=*/false, /*Innermost=*/nullptr,
-                                   /*RelativeToPrimary=*/true,
-                                   /*Pattern=*/nullptr,
-                                   /*ForConstraintInstantiation=*/true);
+  MLTAL = getTemplateInstantiationArgs(FD, FD->getLexicalDeclContext(),
+                                       /*Final=*/false, /*Innermost=*/nullptr,
+                                       /*RelativeToPrimary=*/true,
+                                       /*Pattern=*/nullptr,
+                                       /*ForConstraintInstantiation=*/true);
   if (SetupConstraintScope(FD, TemplateArgs, MLTAL, Scope))
     return std::nullopt;
 
@@ -681,6 +683,15 @@ bool Sema::CheckFunctionConstraints(const FunctionDecl *FD,
     return false;
   }
 
+  // A lambda conversion operator has the same constraints as the call operator
+  // and constraints checking relies on whether we are in a lambda call operator
+  // (and may refer to its parameters), so check the call operator instead.
+  if (const auto *MD = dyn_cast<CXXConversionDecl>(FD);
+      MD && isLambdaConversionOperator(const_cast<CXXConversionDecl *>(MD)))
+    return CheckFunctionConstraints(MD->getParent()->getLambdaCallOperator(),
+                                    Satisfaction, UsageLoc,
+                                    ForOverloadResolution);
+
   DeclContext *CtxToSave = const_cast<FunctionDecl *>(FD);
 
   while (isLambdaCallOperator(CtxToSave) || FD->isTransparentContext()) {
@@ -691,8 +702,7 @@ bool Sema::CheckFunctionConstraints(const FunctionDecl *FD,
   }
 
   ContextRAII SavedContext{*this, CtxToSave};
-  LocalInstantiationScope Scope(*this, !ForOverloadResolution ||
-                                           isLambdaCallOperator(FD));
+  LocalInstantiationScope Scope(*this, !ForOverloadResolution);
   std::optional<MultiLevelTemplateArgumentList> MLTAL =
       SetupConstraintCheckingTemplateArgumentsAndScope(
           const_cast<FunctionDecl *>(FD), {}, Scope);
@@ -707,6 +717,11 @@ bool Sema::CheckFunctionConstraints(const FunctionDecl *FD,
     Record = const_cast<CXXRecordDecl *>(Method->getParent());
   }
   CXXThisScopeRAII ThisScope(*this, Record, ThisQuals, Record != nullptr);
+
+  LambdaScopeForCallOperatorInstantiationRAII LambdaScope(
+      *this, const_cast<FunctionDecl *>(FD), *MLTAL, Scope,
+      ForOverloadResolution);
+
   return CheckConstraintSatisfaction(
       FD, {FD->getTrailingRequiresClause()}, *MLTAL,
       SourceRange(UsageLoc.isValid() ? UsageLoc : FD->getLocation()),
@@ -721,10 +736,11 @@ static unsigned
 CalculateTemplateDepthForConstraints(Sema &S, const NamedDecl *ND,
                                      bool SkipForSpecialization = false) {
   MultiLevelTemplateArgumentList MLTAL = S.getTemplateInstantiationArgs(
-      ND, /*Final=*/false, /*Innermost=*/nullptr, /*RelativeToPrimary=*/true,
+      ND, ND->getLexicalDeclContext(), /*Final=*/false, /*Innermost=*/nullptr,
+      /*RelativeToPrimary=*/true,
       /*Pattern=*/nullptr,
       /*ForConstraintInstantiation=*/true, SkipForSpecialization);
-  return MLTAL.getNumSubstitutedLevels();
+  return MLTAL.getNumLevels();
 }
 
 namespace {
@@ -755,18 +771,31 @@ namespace {
   };
 } // namespace
 
-static const Expr *SubstituteConstraintExpression(Sema &S, const NamedDecl *ND,
-                                                  const Expr *ConstrExpr) {
+static const Expr *
+SubstituteConstraintExpression(Sema &S,
+                               const Sema::TemplateCompareNewDeclInfo &DeclInfo,
+                               const Expr *ConstrExpr) {
   MultiLevelTemplateArgumentList MLTAL = S.getTemplateInstantiationArgs(
-      ND, /*Final=*/false, /*Innermost=*/nullptr,
+      DeclInfo.getDecl(), DeclInfo.getLexicalDeclContext(), /*Final=*/false,
+      /*Innermost=*/nullptr,
       /*RelativeToPrimary=*/true,
-      /*Pattern=*/nullptr,
-      /*ForConstraintInstantiation=*/true, /*SkipForSpecialization*/ false);
+      /*Pattern=*/nullptr, /*ForConstraintInstantiation=*/true,
+      /*SkipForSpecialization*/ false);
+
   if (MLTAL.getNumSubstitutedLevels() == 0)
     return ConstrExpr;
+
   Sema::SFINAETrap SFINAE(S, /*AccessCheckingSFINAE=*/false);
+
+  Sema::InstantiatingTemplate Inst(
+      S, DeclInfo.getLocation(),
+      Sema::InstantiatingTemplate::ConstraintNormalization{},
+      const_cast<NamedDecl *>(DeclInfo.getDecl()), SourceRange{});
+  if (Inst.isInvalid())
+    return nullptr;
+
   std::optional<Sema::CXXThisScopeRAII> ThisScope;
-  if (auto *RD = dyn_cast<CXXRecordDecl>(ND->getDeclContext()))
+  if (auto *RD = dyn_cast<CXXRecordDecl>(DeclInfo.getDeclContext()))
     ThisScope.emplace(S, const_cast<CXXRecordDecl *>(RD), Qualifiers());
   ExprResult SubstConstr =
       S.SubstConstraintExpr(const_cast<clang::Expr *>(ConstrExpr), MLTAL);
@@ -777,11 +806,13 @@ static const Expr *SubstituteConstraintExpression(Sema &S, const NamedDecl *ND,
 
 bool Sema::AreConstraintExpressionsEqual(const NamedDecl *Old,
                                          const Expr *OldConstr,
-                                         const NamedDecl *New,
+                                         const TemplateCompareNewDeclInfo &New,
                                          const Expr *NewConstr) {
   if (OldConstr == NewConstr)
     return true;
-  if (Old && New && Old != New) {
+  // C++ [temp.constr.decl]p4
+  if (Old && !New.isInvalid() && !New.ContainsDecl(Old) &&
+      Old->getLexicalDeclContext() != New.getLexicalDeclContext()) {
     if (const Expr *SubstConstr =
             SubstituteConstraintExpression(*this, Old, OldConstr))
       OldConstr = SubstConstr;
@@ -881,12 +912,10 @@ bool Sema::CheckInstantiatedFunctionTemplateConstraints(
     ThisQuals = Method->getMethodQualifiers();
     Record = Method->getParent();
   }
+
   CXXThisScopeRAII ThisScope(*this, Record, ThisQuals, Record != nullptr);
-  FunctionScopeRAII FuncScope(*this);
-  if (isLambdaCallOperator(Decl))
-    PushLambdaScope();
-  else
-    FuncScope.disable();
+  LambdaScopeForCallOperatorInstantiationRAII LambdaScope(
+      *this, const_cast<FunctionDecl *>(Decl), *MLTAL, Scope);
 
   llvm::SmallVector<Expr *, 1> Converted;
   return CheckConstraintSatisfaction(Template, TemplateAC, Converted, *MLTAL,
@@ -1145,6 +1174,11 @@ void Sema::DiagnoseUnsatisfiedConstraint(
 const NormalizedConstraint *
 Sema::getNormalizedAssociatedConstraints(
     NamedDecl *ConstrainedDecl, ArrayRef<const Expr *> AssociatedConstraints) {
+  // In case the ConstrainedDecl comes from modules, it is necessary to use
+  // the canonical decl to avoid different atomic constraints with the 'same'
+  // declarations.
+  ConstrainedDecl = cast<NamedDecl>(ConstrainedDecl->getCanonicalDecl());
+
   auto CacheEntry = NormalizationCache.find(ConstrainedDecl);
   if (CacheEntry == NormalizationCache.end()) {
     auto Normalized =
@@ -1222,7 +1256,8 @@ static bool substituteParameterMappings(Sema &S, NormalizedConstraint &N,
   TemplateArgumentList TAL{TemplateArgumentList::OnStack,
                            CSE->getTemplateArguments()};
   MultiLevelTemplateArgumentList MLTAL = S.getTemplateInstantiationArgs(
-      CSE->getNamedConcept(), /*Final=*/false, &TAL,
+      CSE->getNamedConcept(), CSE->getNamedConcept()->getLexicalDeclContext(),
+      /*Final=*/false, &TAL,
       /*RelativeToPrimary=*/true,
       /*Pattern=*/nullptr,
       /*ForConstraintInstantiation=*/true);
@@ -1370,7 +1405,7 @@ static NormalForm makeDNF(const NormalizedConstraint &Normalized) {
 }
 
 template<typename AtomicSubsumptionEvaluator>
-static bool subsumes(NormalForm PDNF, NormalForm QCNF,
+static bool subsumes(const NormalForm &PDNF, const NormalForm &QCNF,
                      AtomicSubsumptionEvaluator E) {
   // C++ [temp.constr.order] p2
   //   Then, P subsumes Q if and only if, for every disjunctive clause Pi in the

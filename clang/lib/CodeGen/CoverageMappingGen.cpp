@@ -322,12 +322,12 @@ public:
     for (const auto &FL : FileLocs) {
       SourceLocation Loc = FL.first;
       FileID SpellingFile = SM.getDecomposedSpellingLoc(Loc).first;
-      auto Entry = SM.getFileEntryForID(SpellingFile);
+      auto Entry = SM.getFileEntryRefForID(SpellingFile);
       if (!Entry)
         continue;
 
       FileIDMapping[SM.getFileID(Loc)] = std::make_pair(Mapping.size(), Loc);
-      Mapping.push_back(CVM.getFileID(Entry));
+      Mapping.push_back(CVM.getFileID(*Entry));
     }
   }
 
@@ -602,6 +602,19 @@ struct CounterCoverageMappingBuilder
       MostRecentLocation = *StartLoc;
     }
 
+    // If either of these locations is invalid, something elsewhere in the
+    // compiler has broken.
+    assert((!StartLoc || StartLoc->isValid()) && "Start location is not valid");
+    assert((!EndLoc || EndLoc->isValid()) && "End location is not valid");
+
+    // However, we can still recover without crashing.
+    // If either location is invalid, set it to std::nullopt to avoid
+    // letting users of RegionStack think that region has a valid start/end
+    // location.
+    if (StartLoc && StartLoc->isInvalid())
+      StartLoc = std::nullopt;
+    if (EndLoc && EndLoc->isInvalid())
+      EndLoc = std::nullopt;
     RegionStack.emplace_back(Count, FalseCount, StartLoc, EndLoc);
 
     return RegionStack.size() - 1;
@@ -624,7 +637,8 @@ struct CounterCoverageMappingBuilder
     assert(RegionStack.size() >= ParentIndex && "parent not in stack");
     while (RegionStack.size() > ParentIndex) {
       SourceMappingRegion &Region = RegionStack.back();
-      if (Region.hasStartLoc()) {
+      if (Region.hasStartLoc() &&
+          (Region.hasEndLoc() || RegionStack[ParentIndex].hasEndLoc())) {
         SourceLocation StartLoc = Region.getBeginLoc();
         SourceLocation EndLoc = Region.hasEndLoc()
                                     ? Region.getEndLoc()
@@ -691,7 +705,7 @@ struct CounterCoverageMappingBuilder
         assert(SM.isWrittenInSameFile(Region.getBeginLoc(), EndLoc));
         assert(SpellingRegion(SM, Region).isInSourceOrder());
         SourceRegions.push_back(Region);
-        }
+      }
       RegionStack.pop_back();
     }
   }
@@ -1018,11 +1032,21 @@ struct CounterCoverageMappingBuilder
     // lexer may not be able to report back precise token end locations for
     // these children nodes (llvm.org/PR39822), and moreover users will not be
     // able to see coverage for them.
+    Counter BodyCounter = getRegionCounter(Body);
     bool Defaulted = false;
     if (auto *Method = dyn_cast<CXXMethodDecl>(D))
       Defaulted = Method->isDefaulted();
+    if (auto *Ctor = dyn_cast<CXXConstructorDecl>(D)) {
+      for (auto *Initializer : Ctor->inits()) {
+        if (Initializer->isWritten()) {
+          auto *Init = Initializer->getInit();
+          if (getStart(Init).isValid() && getEnd(Init).isValid())
+            propagateCounts(BodyCounter, Init);
+        }
+      }
+    }
 
-    propagateCounts(getRegionCounter(Body), Body,
+    propagateCounts(BodyCounter, Body,
                     /*VisitChildren=*/!Defaulted);
     assert(RegionStack.empty() && "Regions entered but never exited");
   }
@@ -1566,6 +1590,15 @@ struct CounterCoverageMappingBuilder
     // Lambdas are treated as their own functions for now, so we shouldn't
     // propagate counts into them.
   }
+
+  void VisitPseudoObjectExpr(const PseudoObjectExpr *POE) {
+    // Just visit syntatic expression as this is what users actually write.
+    VisitStmt(POE->getSyntacticForm());
+  }
+
+  void VisitOpaqueValueExpr(const OpaqueValueExpr* OVE) {
+    Visit(OVE->getSourceExpr());
+  }
 };
 
 } // end anonymous namespace
@@ -1611,9 +1644,7 @@ static void dump(llvm::raw_ostream &OS, StringRef FunctionName,
 
 CoverageMappingModuleGen::CoverageMappingModuleGen(
     CodeGenModule &CGM, CoverageSourceInfo &SourceInfo)
-    : CGM(CGM), SourceInfo(SourceInfo) {
-  CoveragePrefixMap = CGM.getCodeGenOpts().CoveragePrefixMap;
-}
+    : CGM(CGM), SourceInfo(SourceInfo) {}
 
 std::string CoverageMappingModuleGen::getCurrentDirname() {
   if (!CGM.getCodeGenOpts().CoverageCompilationDir.empty())
@@ -1627,8 +1658,13 @@ std::string CoverageMappingModuleGen::getCurrentDirname() {
 std::string CoverageMappingModuleGen::normalizeFilename(StringRef Filename) {
   llvm::SmallString<256> Path(Filename);
   llvm::sys::path::remove_dots(Path, /*remove_dot_dot=*/true);
-  for (const auto &Entry : CoveragePrefixMap) {
-    if (llvm::sys::path::replace_path_prefix(Path, Entry.first, Entry.second))
+
+  /// Traverse coverage prefix map in reverse order because prefix replacements
+  /// are applied in reverse order starting from the last one when multiple
+  /// prefix replacement options are provided.
+  for (const auto &[From, To] :
+       llvm::reverse(CGM.getCodeGenOpts().CoveragePrefixMap)) {
+    if (llvm::sys::path::replace_path_prefix(Path, From, To))
       break;
   }
   return Path.str().str();
@@ -1692,13 +1728,11 @@ void CoverageMappingModuleGen::emitFunctionMappingRecord(
 void CoverageMappingModuleGen::addFunctionMappingRecord(
     llvm::GlobalVariable *NamePtr, StringRef NameValue, uint64_t FuncHash,
     const std::string &CoverageMapping, bool IsUsed) {
-  llvm::LLVMContext &Ctx = CGM.getLLVMContext();
   const uint64_t NameHash = llvm::IndexedInstrProf::ComputeHash(NameValue);
   FunctionRecords.push_back({NameHash, FuncHash, CoverageMapping, IsUsed});
 
   if (!IsUsed)
-    FunctionNames.push_back(
-        llvm::ConstantExpr::getBitCast(NamePtr, llvm::Type::getInt8PtrTy(Ctx)));
+    FunctionNames.push_back(NamePtr);
 
   if (CGM.getCodeGenOpts().DumpCoverageMapping) {
     // Dump the coverage mapping data for this function by decoding the
@@ -1714,7 +1748,7 @@ void CoverageMappingModuleGen::addFunctionMappingRecord(
     FilenameStrs[0] = normalizeFilename(getCurrentDirname());
     for (const auto &Entry : FileEntries) {
       auto I = Entry.second;
-      FilenameStrs[I] = normalizeFilename(Entry.first->getName());
+      FilenameStrs[I] = normalizeFilename(Entry.first.getName());
     }
     ArrayRef<std::string> FilenameRefs = llvm::ArrayRef(FilenameStrs);
     RawCoverageMappingReader Reader(CoverageMapping, FilenameRefs, Filenames,
@@ -1738,7 +1772,7 @@ void CoverageMappingModuleGen::emit() {
   FilenameStrs[0] = normalizeFilename(getCurrentDirname());
   for (const auto &Entry : FileEntries) {
     auto I = Entry.second;
-    FilenameStrs[I] = normalizeFilename(Entry.first->getName());
+    FilenameStrs[I] = normalizeFilename(Entry.first.getName());
   }
 
   std::string Filenames;
@@ -1786,7 +1820,7 @@ void CoverageMappingModuleGen::emit() {
   CGM.addUsedGlobal(CovData);
   // Create the deferred function records array
   if (!FunctionNames.empty()) {
-    auto NamesArrTy = llvm::ArrayType::get(llvm::Type::getInt8PtrTy(Ctx),
+    auto NamesArrTy = llvm::ArrayType::get(llvm::PointerType::getUnqual(Ctx),
                                            FunctionNames.size());
     auto NamesArrVal = llvm::ConstantArray::get(NamesArrTy, FunctionNames);
     // This variable will *NOT* be emitted to the object file. It is used
@@ -1797,7 +1831,7 @@ void CoverageMappingModuleGen::emit() {
   }
 }
 
-unsigned CoverageMappingModuleGen::getFileID(const FileEntry *File) {
+unsigned CoverageMappingModuleGen::getFileID(FileEntryRef File) {
   auto It = FileEntries.find(File);
   if (It != FileEntries.end())
     return It->second;

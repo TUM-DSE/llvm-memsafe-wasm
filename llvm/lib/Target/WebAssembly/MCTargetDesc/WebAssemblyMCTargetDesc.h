@@ -14,9 +14,10 @@
 #ifndef LLVM_LIB_TARGET_WEBASSEMBLY_MCTARGETDESC_WEBASSEMBLYMCTARGETDESC_H
 #define LLVM_LIB_TARGET_WEBASSEMBLY_MCTARGETDESC_WEBASSEMBLYMCTARGETDESC_H
 
-#include "../WebAssemblySubtarget.h"
 #include "llvm/BinaryFormat/Wasm.h"
+#include "llvm/MC/MCContext.h"
 #include "llvm/MC/MCInstrDesc.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DataTypes.h"
 #include <memory>
 
@@ -28,7 +29,8 @@ class MCInstrInfo;
 class MCObjectTargetWriter;
 class Triple;
 
-MCCodeEmitter *createWebAssemblyMCCodeEmitter(const MCInstrInfo &MCII);
+MCCodeEmitter *createWebAssemblyMCCodeEmitter(const MCInstrInfo &MCII,
+                                              MCContext &Ctx);
 
 MCAsmBackend *createWebAssemblyAsmBackend(const Triple &TT);
 
@@ -263,12 +265,10 @@ inline unsigned GetDefaultP2AlignAny(unsigned Opc) {
   WASM_LOAD_STORE(STORE_LANE_I64x2)
   case WebAssembly::SEGMENT_NEW_A64:
   case WebAssembly::SEGMENT_NEW_A64_S:
+  case WebAssembly::SEGMENT_SET_TAG_A64:
+  case WebAssembly::SEGMENT_SET_TAG_A64_S:
   case WebAssembly::SEGMENT_FREE_A64:
   case WebAssembly::SEGMENT_FREE_A64_S:
-  case WebAssembly::SEGMENT_STACK_NEW_A64:
-  case WebAssembly::SEGMENT_STACK_NEW_A64_S:
-  case WebAssembly::SEGMENT_STACK_FREE_A64:
-  case WebAssembly::SEGMENT_STACK_FREE_A64_S:
   return 3;
   WASM_LOAD_STORE(LOAD_V128)
   WASM_LOAD_STORE(STORE_V128)
@@ -431,8 +431,8 @@ inline bool isCallIndirect(unsigned Opc) {
   }
 }
 
-inline bool isBrTable(const MachineInstr &MI) {
-  switch (MI.getOpcode()) {
+inline bool isBrTable(unsigned Opc) {
+  switch (Opc) {
   case WebAssembly::BR_TABLE_I32:
   case WebAssembly::BR_TABLE_I32_S:
   case WebAssembly::BR_TABLE_I64:
@@ -541,7 +541,18 @@ inline bool isLocalTee(unsigned Opc) {
   }
 }
 
+static const unsigned UnusedReg = -1u;
+
+// For a given stackified WAReg, return the id number to print with push/pop.
+unsigned inline getWARegStackId(unsigned Reg) {
+  assert(Reg & INT32_MIN);
+  return Reg & INT32_MAX;
+}
+
 } // end namespace WebAssembly
 } // end namespace llvm
+
+#define GET_SUBTARGETINFO_ENUM
+#include "WebAssemblyGenSubtargetInfo.inc"
 
 #endif

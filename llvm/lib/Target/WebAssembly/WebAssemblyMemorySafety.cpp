@@ -155,8 +155,6 @@ public:
   bool visitDbgInfoIntrinsic(DbgInfoIntrinsic &I) { return true; }
 
   bool visitInstruction(Instruction &I) {
-    I.dump();
-    // TODO: remove this and resafe with default return false
     llvm_unreachable("All cases should be handled above");
   }
 };
@@ -177,14 +175,7 @@ public:
 private:
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
-    AU.addRequiredTransitive<TargetLibraryInfoWrapperPass>();
-  }
-
-  bool isAllocKind(Attribute Attr, AllocFnKind Kind) const {
-    if (!Attr.hasAttribute(Attribute::AllocKind))
-      return false;
-
-    return (Attr.getAllocKind() & Kind) != AllocFnKind::Unknown;
+//    AU.addRequiredTransitive<TargetLibraryInfoWrapperPass>();
   }
 
   Value *alignAllocSize(Value *AllocSize, Instruction *InsertBefore) {
@@ -206,13 +197,10 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
       F.getName().starts_with("__wasm_memsafety_"))
     return false;
 
-  auto &TLIAnalysis = getAnalysis<TargetLibraryInfoWrapperPass>();
-
   DataLayout DL = F.getParent()->getDataLayout();
   LLVMContext &Ctx(F.getContext());
 
   SmallVector<AllocaInst *, 8> AllocaInsts;
-  SmallVector<std::pair<AllocFnKind, CallInst *>, 8> CallsToAllocFunctions;
 
   for (auto &BB : F) {
     for (auto &I : BB) {
@@ -225,81 +213,16 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
           AllocaInsts.emplace_back(Alloca);
         }
       }
-      if (auto *Call = dyn_cast<CallInst>(&I)) {
-        auto *CalledFunction = Call->getCalledFunction();
-        inferNonMandatoryLibFuncAttrs(CalledFunction->getParent(), CalledFunction->getName(), TLIAnalysis.getTLI(F));
-        auto Attr =
-            CalledFunction->getFnAttribute(Attribute::AttrKind::AllocKind);
-        if (Attr.hasAttribute(Attribute::AllocKind)) {
-          if (isAllocKind(Attr, AllocFnKind::Alloc)) {
-            CallsToAllocFunctions.emplace_back(
-                std::pair(AllocFnKind::Alloc, Call));
-          } else if (isAllocKind(Attr, AllocFnKind::Realloc)) {
-            CallsToAllocFunctions.emplace_back(
-                std::pair(AllocFnKind::Realloc, Call));
-          } else if (isAllocKind(Attr, AllocFnKind::Free)) {
-            CallsToAllocFunctions.emplace_back(
-                std::pair(AllocFnKind::Free, Call));
-          }
-          // if (isAllocKind(Attr, AllocFnKind::Uninitialized)) {
-          //   errs() << "AllocKind Uninitialized\n";
-          // }
-          // if (isAllocKind(Attr, AllocFnKind::Zeroed)) {
-          //   errs() << "AllocKind Zeroed\n";
-          // }
-          // if (isAllocKind(Attr, AllocFnKind::Aligned)) {
-          //   errs() << "AllocKind Aligned\n";
-          // }
-        }
-      }
     }
-  }
-
-  auto SafeMallocFn = F.getParent()->getOrInsertFunction(
-      "__wasm_memsafety_malloc",
-      FunctionType::get(PointerType::getInt8PtrTy(Ctx),
-                        {
-                            Type::getInt64Ty(Ctx),
-                            Type::getInt64Ty(Ctx),
-                        },
-                        false));
-  auto SafeFreeFn = F.getParent()->getOrInsertFunction(
-      "__wasm_memsafety_free", FunctionType::get(Type::getVoidTy(Ctx),
-                                                 {
-                                                     Type::getInt8PtrTy(Ctx),
-                                                 },
-                                                 false));
-
-  for (auto [Kind, Call] : CallsToAllocFunctions) {
-    switch (Kind) {
-    case llvm::AllocFnKind::Alloc: {
-      // TODO: handle functions other than c malloc
-      auto *NewCall = CallInst::Create(SafeMallocFn,
-                                       {ConstantInt::get(Type::getInt64Ty(Ctx),
-                                                         /* align = */ 16),
-                                        Call->getArgOperand(0)},
-                                       Call->getName(), Call);
-      Call->replaceAllUsesWith(NewCall);
-      break;
-    }
-    case llvm::AllocFnKind::Free: {
-      auto *NewCall = CallInst::Create(SafeFreeFn, {Call->getArgOperand(0)},
-                                       Call->getName(), Call);
-      Call->replaceAllUsesWith(NewCall);
-      break;
-    }
-    default:
-      llvm_unreachable("Not yet implemented.");
-    }
-    Call->eraseFromParent();
   }
 
   DominatorTree DT(F);
-  auto *NewSegmentStackFunc = Intrinsic::getDeclaration(
-      F.getParent(), Intrinsic::wasm_segment_stack_new);
-  auto *FreeSegmentStackFunc = Intrinsic::getDeclaration(
-      F.getParent(), Intrinsic::wasm_segment_stack_free);
+  auto *NewSegmentStackFunc =
+      Intrinsic::getDeclaration(F.getParent(), Intrinsic::wasm_segment_new);
+  auto *FreeSegmentStackFunc =
+      Intrinsic::getDeclaration(F.getParent(), Intrinsic::wasm_segment_set_tag);
 
+  // Alloca stack allocations
   for (auto *Alloca : AllocaInsts) {
     Alloca->setAlignment(std::max(Alloca->getAlign(), Align(16)));
 

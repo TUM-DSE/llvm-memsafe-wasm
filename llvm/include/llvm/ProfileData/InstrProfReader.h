@@ -135,6 +135,9 @@ public:
   /// Return true if profile includes a memory profile.
   virtual bool hasMemoryProfile() const = 0;
 
+  /// Return true if this has a temporal profile.
+  virtual bool hasTemporalProfile() const = 0;
+
   /// Returns a BitsetEnum describing the attributes of the profile. To check
   /// individual attributes prefer using the helpers above.
   virtual InstrProfKind getProfileKind() const = 0;
@@ -156,6 +159,10 @@ public:
 
 protected:
   std::unique_ptr<InstrProfSymtab> Symtab;
+  /// A list of temporal profile traces.
+  SmallVector<TemporalProfTraceTy> TemporalProfTraces;
+  /// The total number of temporal profile traces seen.
+  uint64_t TemporalProfTraceStreamSize = 0;
 
   /// Set the current error and return same.
   Error error(instrprof_error Err, const std::string &ErrMsg = "") {
@@ -195,11 +202,27 @@ public:
   /// instrprof file.
   static Expected<std::unique_ptr<InstrProfReader>>
   create(const Twine &Path, vfs::FileSystem &FS,
-         const InstrProfCorrelator *Correlator = nullptr);
+         const InstrProfCorrelator *Correlator = nullptr,
+         std::function<void(Error)> Warn = nullptr);
 
   static Expected<std::unique_ptr<InstrProfReader>>
   create(std::unique_ptr<MemoryBuffer> Buffer,
-         const InstrProfCorrelator *Correlator = nullptr);
+         const InstrProfCorrelator *Correlator = nullptr,
+         std::function<void(Error)> Warn = nullptr);
+
+  /// \param Weight for raw profiles use this as the temporal profile trace
+  ///               weight
+  /// \returns a list of temporal profile traces.
+  virtual SmallVector<TemporalProfTraceTy> &
+  getTemporalProfTraces(std::optional<uint64_t> Weight = {}) {
+    // For non-raw profiles we ignore the input weight and instead use the
+    // weights already in the traces.
+    return TemporalProfTraces;
+  }
+  /// \returns the total number of temporal profile traces seen.
+  uint64_t getTemporalProfTraceStreamSize() {
+    return TemporalProfTraceStreamSize;
+  }
 };
 
 /// Reader for the simple text based instrprof format.
@@ -220,6 +243,8 @@ private:
   InstrProfKind ProfileKind = InstrProfKind::Unknown;
 
   Error readValueProfileData(InstrProfRecord &Record);
+
+  Error readTemporalProfTraceData();
 
 public:
   TextInstrProfReader(std::unique_ptr<MemoryBuffer> DataBuffer_)
@@ -259,6 +284,10 @@ public:
     return false;
   }
 
+  bool hasTemporalProfile() const override {
+    return static_cast<bool>(ProfileKind & InstrProfKind::TemporalProfile);
+  }
+
   InstrProfKind getProfileKind() const override { return ProfileKind; }
 
   /// Read the header.
@@ -288,17 +317,22 @@ private:
   /// If available, this hold the ProfileData array used to correlate raw
   /// instrumentation data to their functions.
   const InstrProfCorrelatorImpl<IntPtrT> *Correlator;
+  /// A list of timestamps paired with a function name reference.
+  std::vector<std::pair<uint64_t, uint64_t>> TemporalProfTimestamps;
   bool ShouldSwapBytes;
-  // The value of the version field of the raw profile data header. The lower 56
-  // bits specifies the format version and the most significant 8 bits specify
+  // The value of the version field of the raw profile data header. The lower 32
+  // bits specifies the format version and the most significant 32 bits specify
   // the variant types of the profile.
   uint64_t Version;
   uint64_t CountersDelta;
+  uint64_t BitmapDelta;
   uint64_t NamesDelta;
   const RawInstrProf::ProfileData<IntPtrT> *Data;
   const RawInstrProf::ProfileData<IntPtrT> *DataEnd;
   const char *CountersStart;
   const char *CountersEnd;
+  const char *BitmapStart;
+  const char *BitmapEnd;
   const char *NamesStart;
   const char *NamesEnd;
   // After value profile is all read, this pointer points to
@@ -312,12 +346,19 @@ private:
   /// Start address of binary id length and data pairs.
   const uint8_t *BinaryIdsStart;
 
+  std::function<void(Error)> Warn;
+
+  /// Maxium counter value 2^56.
+  static const uint64_t MaxCounterValue = (1ULL << 56);
+
 public:
   RawInstrProfReader(std::unique_ptr<MemoryBuffer> DataBuffer,
-                     const InstrProfCorrelator *Correlator)
+                     const InstrProfCorrelator *Correlator,
+                     std::function<void(Error)> Warn)
       : DataBuffer(std::move(DataBuffer)),
         Correlator(dyn_cast_or_null<const InstrProfCorrelatorImpl<IntPtrT>>(
-            Correlator)) {}
+            Correlator)),
+        Warn(Warn) {}
   RawInstrProfReader(const RawInstrProfReader &) = delete;
   RawInstrProfReader &operator=(const RawInstrProfReader &) = delete;
 
@@ -345,6 +386,8 @@ public:
     return (Version & VARIANT_MASK_DBG_CORRELATE) != 0;
   }
 
+  bool useCorrelate() const { return useDebugInfoCorrelate(); }
+
   bool hasSingleByteCoverage() const override {
     return (Version & VARIANT_MASK_BYTE_COVERAGE) != 0;
   }
@@ -359,6 +402,10 @@ public:
     return false;
   }
 
+  bool hasTemporalProfile() const override {
+    return (Version & VARIANT_MASK_TEMPORAL_PROF) != 0;
+  }
+
   /// Returns a BitsetEnum describing the attributes of the raw instr profile.
   InstrProfKind getProfileKind() const override;
 
@@ -367,23 +414,25 @@ public:
     return *Symtab.get();
   }
 
+  SmallVector<TemporalProfTraceTy> &
+  getTemporalProfTraces(std::optional<uint64_t> Weight = {}) override;
+
 private:
   Error createSymtab(InstrProfSymtab &Symtab);
   Error readNextHeader(const char *CurrentPos);
   Error readHeader(const RawInstrProf::Header &Header);
 
   template <class IntT> IntT swap(IntT Int) const {
-    return ShouldSwapBytes ? sys::getSwappedBytes(Int) : Int;
+    return ShouldSwapBytes ? llvm::byteswap(Int) : Int;
   }
 
-  support::endianness getDataEndianness() const {
-    support::endianness HostEndian = getHostEndianness();
+  llvm::endianness getDataEndianness() const {
     if (!ShouldSwapBytes)
-      return HostEndian;
-    if (HostEndian == support::little)
-      return support::big;
+      return llvm::endianness::native;
+    if (llvm::endianness::native == llvm::endianness::little)
+      return llvm::endianness::big;
     else
-      return support::little;
+      return llvm::endianness::little;
   }
 
   inline uint8_t getNumPaddingBytes(uint64_t SizeInBytes) {
@@ -393,6 +442,7 @@ private:
   Error readName(NamedInstrProfRecord &Record);
   Error readFuncHash(NamedInstrProfRecord &Record);
   Error readRawCounts(InstrProfRecord &Record);
+  Error readRawBitmapBytes(InstrProfRecord &Record);
   Error readValueProfilingData(InstrProfRecord &Record);
   bool atEnd() const { return Data == DataEnd; }
 
@@ -405,6 +455,7 @@ private:
       // As we advance to the next record, we maintain the correct CountersDelta
       // with respect to the next record.
       CountersDelta -= sizeof(*Data);
+      BitmapDelta -= sizeof(*Data);
     }
     Data++;
     ValueDataStart += CurValueDataSize;
@@ -416,7 +467,7 @@ private:
   }
 
   StringRef getName(uint64_t NameRef) const {
-    return Symtab->getFuncName(swap(NameRef));
+    return Symtab->getFuncOrVarName(swap(NameRef));
   }
 
   int getCounterTypeSize() const {
@@ -442,7 +493,7 @@ class InstrProfLookupTrait {
   // Endianness of the input value profile data.
   // It should be LE by default, but can be changed
   // for testing purpose.
-  support::endianness ValueProfDataEndianness = support::little;
+  llvm::endianness ValueProfDataEndianness = llvm::endianness::little;
 
 public:
   InstrProfLookupTrait(IndexedInstrProf::HashT HashType, unsigned FormatVersion)
@@ -465,8 +516,10 @@ public:
   ReadKeyDataLength(const unsigned char *&D) {
     using namespace support;
 
-    offset_type KeyLen = endian::readNext<offset_type, little, unaligned>(D);
-    offset_type DataLen = endian::readNext<offset_type, little, unaligned>(D);
+    offset_type KeyLen =
+        endian::readNext<offset_type, llvm::endianness::little, unaligned>(D);
+    offset_type DataLen =
+        endian::readNext<offset_type, llvm::endianness::little, unaligned>(D);
     return std::make_pair(KeyLen, DataLen);
   }
 
@@ -479,7 +532,7 @@ public:
   data_type ReadData(StringRef K, const unsigned char *D, offset_type N);
 
   // Used for testing purpose only.
-  void setValueProfDataEndianness(support::endianness Endianness) {
+  void setValueProfDataEndianness(llvm::endianness Endianness) {
     ValueProfDataEndianness = Endianness;
   }
 };
@@ -496,7 +549,7 @@ struct InstrProfReaderIndexBase {
                                      ArrayRef<NamedInstrProfRecord> &Data) = 0;
   virtual void advanceToNextKey() = 0;
   virtual bool atEnd() const = 0;
-  virtual void setValueProfDataEndianness(support::endianness Endianness) = 0;
+  virtual void setValueProfDataEndianness(llvm::endianness Endianness) = 0;
   virtual uint64_t getVersion() const = 0;
   virtual bool isIRLevelProfile() const = 0;
   virtual bool hasCSIRLevelProfile() const = 0;
@@ -504,6 +557,7 @@ struct InstrProfReaderIndexBase {
   virtual bool hasSingleByteCoverage() const = 0;
   virtual bool functionEntryOnly() const = 0;
   virtual bool hasMemoryProfile() const = 0;
+  virtual bool hasTemporalProfile() const = 0;
   virtual InstrProfKind getProfileKind() const = 0;
   virtual Error populateSymtab(InstrProfSymtab &) = 0;
 };
@@ -544,7 +598,7 @@ public:
     return RecordIterator == HashTable->data_end();
   }
 
-  void setValueProfDataEndianness(support::endianness Endianness) override {
+  void setValueProfDataEndianness(llvm::endianness Endianness) override {
     HashTable->getInfoObj().setValueProfDataEndianness(Endianness);
   }
 
@@ -572,6 +626,10 @@ public:
 
   bool hasMemoryProfile() const override {
     return (FormatVersion & VARIANT_MASK_MEMPROF) != 0;
+  }
+
+  bool hasTemporalProfile() const override {
+    return (FormatVersion & VARIANT_MASK_TEMPORAL_PROF) != 0;
   }
 
   InstrProfKind getProfileKind() const override;
@@ -653,6 +711,10 @@ public:
 
   bool hasMemoryProfile() const override { return Index->hasMemoryProfile(); }
 
+  bool hasTemporalProfile() const override {
+    return Index->hasTemporalProfile();
+  }
+
   /// Returns a BitsetEnum describing the attributes of the indexed instr
   /// profile.
   InstrProfKind getProfileKind() const override {
@@ -671,9 +733,12 @@ public:
   /// When return a hash_mismatch error and MismatchedFuncSum is not nullptr,
   /// the sum of all counters in the mismatched function will be set to
   /// MismatchedFuncSum. If there are multiple instances of mismatched
-  /// functions, MismatchedFuncSum returns the maximum.
+  /// functions, MismatchedFuncSum returns the maximum. If \c FuncName is not
+  /// found, try to lookup \c DeprecatedFuncName to handle profiles built by
+  /// older compilers.
   Expected<InstrProfRecord>
   getInstrProfRecord(StringRef FuncName, uint64_t FuncHash,
+                     StringRef DeprecatedFuncName = "",
                      uint64_t *MismatchedFuncSum = nullptr);
 
   /// Return the memprof record for the function identified by
@@ -683,6 +748,10 @@ public:
   /// Fill Counts with the profile data for the given function name.
   Error getFunctionCounts(StringRef FuncName, uint64_t FuncHash,
                           std::vector<uint64_t> &Counts);
+
+  /// Fill Bitmap Bytes with the profile data for the given function name.
+  Error getFunctionBitmapBytes(StringRef FuncName, uint64_t FuncHash,
+                               std::vector<uint8_t> &BitmapBytes);
 
   /// Return the maximum of all known function counts.
   /// \c UseCS indicates whether to use the context-sensitive count.
@@ -706,7 +775,7 @@ public:
          std::unique_ptr<MemoryBuffer> RemappingBuffer = nullptr);
 
   // Used for testing purpose only.
-  void setValueProfDataEndianness(support::endianness Endianness) {
+  void setValueProfDataEndianness(llvm::endianness Endianness) {
     Index->setValueProfDataEndianness(Endianness);
   }
 

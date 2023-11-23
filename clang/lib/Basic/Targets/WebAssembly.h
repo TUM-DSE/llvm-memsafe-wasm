@@ -63,6 +63,7 @@ class LLVM_LIBRARY_VISIBILITY WebAssemblyTargetInfo : public TargetInfo {
   bool HasTailCall = false;
   bool HasReferenceTypes = false;
   bool HasExtendedConst = false;
+  bool HasMultiMemory = false;
   bool HasMemSafety = false;
 
   std::string ABI;
@@ -131,7 +132,7 @@ private:
     return false;
   }
 
-  const char *getClobbers() const final { return ""; }
+  std::string_view getClobbers() const final { return ""; }
 
   bool isCLZForZeroUndef() const final { return false; }
 

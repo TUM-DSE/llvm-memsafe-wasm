@@ -105,6 +105,10 @@ void MCXCOFFStreamer::emitXCOFFExceptDirective(const MCSymbol *Symbol,
                                                FunctionSize, hasDebug);
 }
 
+void MCXCOFFStreamer::emitXCOFFCInfoSym(StringRef Name, StringRef Metadata) {
+  getAssembler().getWriter().addCInfoSymEntry(Name, Metadata);
+}
+
 void MCXCOFFStreamer::emitCommonSymbol(MCSymbol *Symbol, uint64_t Size,
                                        Align ByteAlignment) {
   getAssembler().registerSymbol(*Symbol);
@@ -133,8 +137,7 @@ void MCXCOFFStreamer::emitInstToData(const MCInst &Inst,
   MCAssembler &Assembler = getAssembler();
   SmallVector<MCFixup, 4> Fixups;
   SmallString<256> Code;
-  raw_svector_ostream VecOS(Code);
-  Assembler.getEmitter().encodeInstruction(Inst, VecOS, Fixups, STI);
+  Assembler.getEmitter().encodeInstruction(Inst, Code, Fixups, STI);
 
   // Add the fixups and data.
   MCDataFragment *DF = getOrCreateDataFragment(&STI);

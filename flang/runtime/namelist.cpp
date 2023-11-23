@@ -62,9 +62,17 @@ bool IONAME(OutputNamelist)(Cookie cookie, const NamelistGroup &group) {
     if (listOutput) {
       listOutput->set_lastWasUndelimitedCharacter(false);
     }
-    if (!(EmitWithAdvance(j == 0 ? ' ' : comma) && EmitUpperCase(item.name) &&
-            EmitWithAdvance('=') &&
-            descr::DescriptorIO<Direction::Output>(io, item.descriptor))) {
+    if (!EmitWithAdvance(j == 0 ? ' ' : comma) || !EmitUpperCase(item.name) ||
+        !EmitWithAdvance('=')) {
+      return false;
+    }
+    if (const auto *addendum{item.descriptor.Addendum()};
+        addendum && addendum->derivedType()) {
+      const NonTbpDefinedIoTable *table{group.nonTbpDefinedIo};
+      if (!IONAME(OutputDerivedType)(cookie, item.descriptor, table)) {
+        return false;
+      }
+    } else if (!descr::DescriptorIO<Direction::Output>(io, item.descriptor)) {
       return false;
     }
   }
@@ -514,9 +522,18 @@ bool IONAME(InputNamelist)(Cookie cookie, const NamelistGroup &group) {
     }
     io.HandleRelativePosition(byteCount);
     // Read the values into the descriptor.  An array can be short.
-    listInput->ResetForNextNamelistItem(useDescriptor->rank() > 0);
-    if (!descr::DescriptorIO<Direction::Input>(io, *useDescriptor)) {
-      return false;
+    if (const auto *addendum{useDescriptor->Addendum()};
+        addendum && addendum->derivedType()) {
+      const NonTbpDefinedIoTable *table{group.nonTbpDefinedIo};
+      listInput->ResetForNextNamelistItem(/*inNamelistSequence=*/true);
+      if (!IONAME(InputDerivedType)(cookie, *useDescriptor, table)) {
+        return false;
+      }
+    } else {
+      listInput->ResetForNextNamelistItem(useDescriptor->rank() > 0);
+      if (!descr::DescriptorIO<Direction::Input>(io, *useDescriptor)) {
+        return false;
+      }
     }
     next = io.GetNextNonBlank(byteCount);
     if (next && *next == comma) {
@@ -535,7 +552,7 @@ bool IONAME(InputNamelist)(Cookie cookie, const NamelistGroup &group) {
 bool IsNamelistNameOrSlash(IoStatementState &io) {
   if (auto *listInput{
           io.get_if<ListDirectedStatementState<Direction::Input>>()}) {
-    if (listInput->inNamelistArray()) {
+    if (listInput->inNamelistSequence()) {
       SavedPosition savedPosition{io};
       std::size_t byteCount{0};
       if (auto ch{io.GetNextNonBlank(byteCount)}) {

@@ -175,49 +175,38 @@ defm : StorePat<i64, truncstorei32, "STORE32_I64">;
 let UseNamedOperandTable = 1 in {
 
 defm SEGMENT_NEW_A64 : I<(outs I64:$dst),
-                        (ins I64:$size),
-                        (outs), (ins),
-                        [],
-                        "segment.new\t$dst, $size", "segment.new",
-                        0xfa00, false>,
+                               (ins P2Align:$p2align, offset64_op:$off, I64:$sp, I64:$size),
+                               (outs),
+                               (ins P2Align:$p2align, offset64_op:$off),
+                               [],
+                               "segment.new\t$dst, ${off}(${sp})${p2align}, $size", "segment.new\t${off}${p2align}",
+                               0xfa00, false>,
                         Requires<[HasAddr64]>; // HasMemSafety
 
+defm SEGMENT_SET_TAG_A64 : I<(outs),
+                                (ins P2Align:$p2align, offset64_op:$off, I64:$addr, I64:$sp, I64:$size),
+                                (outs),
+                                (ins P2Align:$p2align, offset64_op:$off),
+                                [],
+                                "segment.set_tag\t${off}(${addr})${p2align}, $sp, $size", "segment.set_tag\t${off}${p2align}",
+                                0xfa01, false>,
+                        Requires<[HasAddr64]>; // HasMemSafety
 defm SEGMENT_FREE_A64 : I<(outs),
                         (ins P2Align:$p2align, offset64_op:$off, I64:$addr, I64:$size),
                         (outs),
                         (ins P2Align:$p2align, offset64_op:$off),
                         [],
                         "segment.free\t${off}(${addr})${p2align}, $size", "segment.free\t${off}${p2align}",
-                        0xfa01, false>,
-                        Requires<[HasAddr64]>; // HasMemSafety
-
-defm SEGMENT_STACK_NEW_A64 : I<(outs I64:$dst),
-                               (ins P2Align:$p2align, offset64_op:$off, I64:$sp, I64:$size),
-                               (outs),
-                               (ins P2Align:$p2align, offset64_op:$off),
-                               [],
-                               "segment.stack_new\t$dst, ${off}(${sp})${p2align}, $size", "segment.stack_new\t${off}${p2align}",
-                               0xfa02, false>,
-                        Requires<[HasAddr64]>; // HasMemSafety
-
-defm SEGMENT_STACK_FREE_A64 : I<(outs),
-                                (ins P2Align:$p2align, offset64_op:$off, I64:$addr, I64:$sp, I64:$size),
-                                (outs),
-                                (ins P2Align:$p2align, offset64_op:$off),
-                                [],
-                                "segment.stack_free\t${off}(${addr})${p2align}, $sp, $size", "segment.stack_free\t${off}${p2align}",
-                                0xfa03, false>,
+                        0xfa02, false>,
                         Requires<[HasAddr64]>; // HasMemSafety
 }
 
-def : Pat<(int_wasm_segment_new I64:$size),
-          (!cast<NI>(SEGMENT_NEW_A64) I64:$size)>;
+def : Pat<(int_wasm_segment_new (AddrOps64 offset64_op:$offset, I64:$addr), I64:$size),
+          (!cast<NI>(SEGMENT_NEW_A64) 0, offset64_op:$offset, I64:$addr, I64:$size)>;
+def : Pat<(int_wasm_segment_set_tag (AddrOps64 offset64_op:$offset, I64:$addr), I64:$sp, I64:$size),
+          (!cast<NI>(SEGMENT_SET_TAG_A64) 0, offset64_op:$offset, I64:$addr, I64:$sp, I64:$size)>;
 def : Pat<(int_wasm_segment_free (AddrOps64 offset64_op:$offset, I64:$addr), I64:$size),
           (!cast<NI>(SEGMENT_FREE_A64) 0, offset64_op:$offset, I64:$addr, I64:$size)>;
-def : Pat<(int_wasm_segment_stack_new (AddrOps64 offset64_op:$offset, I64:$addr), I64:$size),
-          (!cast<NI>(SEGMENT_STACK_NEW_A64) 0, offset64_op:$offset, I64:$addr, I64:$size)>;
-def : Pat<(int_wasm_segment_stack_free (AddrOps64 offset64_op:$offset, I64:$addr), I64:$sp, I64:$size),
-          (!cast<NI>(SEGMENT_STACK_FREE_A64) 0, offset64_op:$offset, I64:$addr, I64:$sp, I64:$size)>;
 
 
 multiclass MemoryOps<WebAssemblyRegClass rc, string B> {

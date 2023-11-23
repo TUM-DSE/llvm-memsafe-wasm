@@ -284,8 +284,8 @@ int FormatControl<CONTEXT>::CueUpNextDataEdit(Context &context, bool stop) {
       } else {
         stack_[height_].remaining = 0;
       }
-      if (height_ == 1) {
-        // Subtle point (F'2018 13.4 para 9): tha last parenthesized group
+      if (height_ == 1 && !hitEnd_) {
+        // Subtle point (F'2018 13.4 para 9): the last parenthesized group
         // at height 1 becomes the restart point after control reaches the
         // end of the format, including its repeat count.
         stack_[0].start = maybeReversionPoint;
@@ -300,6 +300,7 @@ int FormatControl<CONTEXT>::CueUpNextDataEdit(Context &context, bool stop) {
           return 0; // end of FORMAT and no data items remain
         }
         context.AdvanceRecord(); // implied / before rightmost )
+        hitEnd_ = true;
       }
       auto restart{stack_[height_ - 1].start};
       if (format_[restart] == '(') {
@@ -423,7 +424,7 @@ std::optional<DataEdit> FormatControl<CONTEXT>::GetNextDataEdit(
       ++offset_;
     }
   } else if (edit.descriptor == 'D' && Capitalize(PeekNext()) == 'T') {
-    // DT['iotype'][(v_list)] user-defined derived type I/O
+    // DT['iotype'][(v_list)] defined I/O
     edit.descriptor = DataEdit::DefinedDerivedType;
     ++offset_;
     if (auto quote{static_cast<char>(PeekNext())};
@@ -479,7 +480,8 @@ std::optional<DataEdit> FormatControl<CONTEXT>::GetNextDataEdit(
       }
     }
   }
-  if (edit.descriptor == 'A') { // width is optional for A[w]
+  if (edit.descriptor == 'A' || edit.descriptor == 'L') {
+    // width is optional for A[w] or L[w]
     auto ch{PeekNext()};
     if (ch >= '0' && ch <= '9') {
       edit.width = GetIntField(context);
