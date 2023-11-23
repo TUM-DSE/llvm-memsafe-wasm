@@ -4,7 +4,7 @@
 
 ```shell
 for i in ../demo/demo*.c; do
-  ./build/bin/clang --target=wasm64-unknown-wasi -mmem-safety --sysroot /scratch/martin/src/wasm/wasi-libc/sysroot -g -fsanitize=wasm-memsafety -Os -rtlib=compiler-rt wasm_memsafety_rtlib.c "$i" -o "${i%.c}.wasm"
+  ./build/bin/clang --target=wasm64-unknown-wasi -mmem-safety --sysroot ../wasi-sdk/build/wasi-sdk-20.32gb3d5dd44687d/share/wasi-sysroot -g -fsanitize=wasm-memsafety -Os -g "$i" -o "${i%.c}.wasm"
 done
 ```
 
@@ -15,27 +15,23 @@ Wasmtime can be cross-compiled for aarch64 with the provided `Dockerfile` in thi
 ### `demo.c`
 
 ```shell
-./wasmtime compile demo.wasm --cranelift-enable use_mte --wasm-features=memory64,mem-safety
-./wasmtime run --allow-precompiled --wasm-features=memory64,mem-safety -- demo.cwasm [index] [value]
+./wasmtime run -W memory64=y -W mem-safet=y -C mte=y -- demo.wasm [index] [value]
 ```
 
 ### `demo-heap.c`
 
 ```shell
-./wasmtime compile demo-heap.wasm --cranelift-enable use_mte --wasm-features=memory64,mem-safety
-./wasmtime run --allow-precompiled --wasm-features=memory64,mem-safety -- demo-heap.cwasm [heap_size] [index] [value]
+./wasmtime run -W memory64=y -W mem-safet=y -C mte=y -- demo-heap.wasm [heap_size] [index] [value]
 ```
 
 ### `demo-use-after-free.c`
 
 ```shell
-./wasmtime compile demo-use-after-free.wasm --cranelift-enable use_mte --wasm-features=memory64,mem-safety
-./wasmtime run --allow-precompiled --wasm-features=memory64,mem-safety -- demo-use-after-free.cwasm [heap_size] [index] [value] [early_free]
+./wasmtime run -W memory64=y -W mem-safet=y -C mte=y -- demo-use-after-free.wasm [heap_size] [index] [value] [early_free]
 ```
 
 ### `demo-scanf.c`
 
 ```shell
-./wasmtime compile demo-scanf.wasm --cranelift-enable use_mte --wasm-features=memory64,mem-safety
-./wasmtime run --allow-precompiled --wasm-features=memory64,mem-safety -- demo-scanf.cwasm
+./wasmtime run -W memory64=y -W mem-safet=y -C mte=y -- demo-scanf.cwasm
 ```
