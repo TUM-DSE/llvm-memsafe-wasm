@@ -3,13 +3,13 @@
 
 // TODO: use size_t over int
 
-void merge(int* arr, int l, int m, int r) {
+void merge(int *arr, int l, int m, int r) {
   int L_size = m - l + 1;
   int R_size = r - m;
 
   // create temporary arrays on the heap
-  int* L = (int *)malloc(L_size * sizeof(int));
-  int* R = (int *)malloc(R_size * sizeof(int));
+  int *L = (int *)malloc(L_size * sizeof(int));
+  int *R = (int *)malloc(R_size * sizeof(int));
 
   if (!L || !R) {
     fprintf(stderr, "Memory allocation failed\n");
@@ -30,8 +30,7 @@ void merge(int* arr, int l, int m, int r) {
     if (L[i] <= R[j]) {
       arr[k] = L[i];
       i++;
-    }
-    else {
+    } else {
       arr[k] = R[j];
       j++;
     }
@@ -56,7 +55,7 @@ void merge(int* arr, int l, int m, int r) {
   free(R);
 }
 
-void merge_sort(int* arr, int l, int r) {
+void merge_sort(int *arr, int l, int r) {
   if (l < r) {
     int m = l + (r - l) / 2;
     merge_sort(arr, l, m);
@@ -65,7 +64,7 @@ void merge_sort(int* arr, int l, int r) {
   }
 }
 
-void bubble_sort(int* arr, int n) {
+void bubble_sort(int *arr, int n) {
   for (int i = 0; i < n - 1; i++) {
     for (int j = 0; j < n - i - 1; j++) {
       if (arr[j] > arr[j + 1]) {
@@ -77,7 +76,7 @@ void bubble_sort(int* arr, int n) {
   }
 }
 
-int assert_sorted(int* arr, int n) {
+int assert_sorted(int *arr, int n) {
   for (int i = 0; i < n - 1; i++) {
     if (arr[i] > arr[i + 1]) {
       return 0; // Not sorted
@@ -86,7 +85,7 @@ int assert_sorted(int* arr, int n) {
   return 1; // Sorted
 }
 
-void gen_rand_array(int seed, size_t n, int* arr) {
+void gen_rand_array(int seed, size_t n, int *arr) {
   srand(seed);
 
   for (size_t i = 0; i < n; ++i) {
@@ -94,14 +93,14 @@ void gen_rand_array(int seed, size_t n, int* arr) {
   }
 }
 
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[]) {
   if (argc != 2) {
     fprintf(stderr, "Usage: %s length\n", argv[0]);
     return 1;
   }
 
   int n = atoi(argv[1]);
-  int* arr = malloc(n * sizeof(int));
+  int *arr = malloc(n * sizeof(int));
   if (!arr) {
     fprintf(stderr, "Memory allocation failed\n");
     return 1;
