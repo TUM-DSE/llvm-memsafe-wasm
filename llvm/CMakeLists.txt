@@ -1375,26 +1375,15 @@ endif()
 
 # Martin project specific setup
 
-# ExternalProject_Add(
-#     libclang_rt_builtins-32
-#     PREFIX lib/clang
-#     SOURCE_DIR lib/clang/17/lib
-#     URL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-20/libclang_rt.builtins-wasm32-wasi-20.0.tar.gz
-#     URL_HASH SHA512=f3039149c46c6d742c2c98aa40ead5f1e87df251e89a43883944c2a686ff472be535ab1fe317e4c405376d08571aa04fcfe92cf32e61839fdba916080d0490ae
-#     CONFIGURE_COMMAND ""
-#     BUILD_COMMAND ""
-#     INSTALL_COMMAND ""
-#     DOWNLOAD_EXTRACT_TIMESTAMP NEW
-# )
-
 ExternalProject_Add(
     libclang_rt_builtins-64
     PREFIX lib/clang
     SOURCE_DIR lib/clang/18/lib
-    URL https://github.com/martin-fink/wasi-sdk/releases/download/wasi-sdk-20%2Bmemory64/libclang_rt.builtins-wasm64-wasi-20.7g0de66a9eb0d7.tar.gz
-    URL_HASH SHA512=bab3ebd7ca89e2aba9f81d609f86306158612e83c5cdef82dec24eb2e1d2c7d4d501f0fe15654d1fc639402f8df56864385898c3df0376cc2bd874e903ad599c
+    URL https://github.com/martin-fink/wasi-sdk/releases/download/wasi-sdk-20%2Bmemory64%2Bmemsafety/libclang_rt.builtins-wasm64-wasi-20.32g1bd7dc5fcb4e.tar.gz
+    URL_HASH SHA512=f60e156b1a18b73535db63b8693303ae363c37ae631704b631f2cbf72c3622ff6dea9707d3f30ae6d0fdba51b1787847a9b0ec0e60dbc8e3e85012415eeacf87
     CONFIGURE_COMMAND ""
     BUILD_COMMAND ""
     INSTALL_COMMAND ""
     DOWNLOAD_EXTRACT_TIMESTAMP NEW
 )
+
