@@ -19870,8 +19870,8 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
     llvm::Type *IntTy = llvm::Type::getInt64Ty(Builder.getContext());
     Value *Ptr = EmitScalarExpr(E->getArg(0));
     Value *Tag = EmitScalarExpr(E->getArg(1));
-    Value *IntPtr = Builder.CreateIntToPtr(Ptr, IntTy);
-    Value *IntTag = Builder.CreateIntToPtr(Tag, IntTy);
+    Value *IntPtr = Builder.CreatePtrToInt(Ptr, IntTy);
+    Value *IntTag = Builder.CreatePtrToInt(Tag, IntTy);
     Value *BitMask = llvm::ConstantInt::get(IntTy, 0x0000'FFFF'FFFF'FFFF, false);
     Value *BitMaskTag = llvm::ConstantInt::get(IntTy, 0xFFFF'0000'0000'0000, false);
     IntTag = Builder.CreateBinOp(llvm::Instruction::BinaryOps::And, IntTag, BitMaskTag);
