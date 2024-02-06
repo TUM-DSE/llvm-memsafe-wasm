@@ -1,5 +1,11 @@
 # Demo
 
+## PAC Testing
+
+To test the PAC features, which consist of a module pass that inserts custom wasm instructions that sign (`pointer_sign`) and authenticate (`pointer_auth`) a pointer before it is stored to a memory address:
+- Disable MTE (in wasmtime or simply don't generate our MTE-based custom instructions in llvm/clang), since PAC can currently not effectively work when MTE is used (no PAC instructions would be inserted due to limits in our LLVM analysis).
+- Compile demo C file `test-prevent-real-attack.c` without optimizations (`-O0`), since the code that tests PAC would otherwise be optimized away.
+
 ## Building
 
 ```shell
