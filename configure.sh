@@ -3,7 +3,7 @@
 mkdir -p build
 pushd build
 
-cmake -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lldb;lld" \
+cmake -DLLVM_ENABLE_PROJECTS="clang;clang-tools-extra;lld" \
       -DLLVM_TARGETS_TO_BUILD="WebAssembly" \
       -DLLVM_TARGET_ARCH="wasm32" \
       -DLLVM_DEFAULT_TARGET_TRIPLE="wasm32-unknown-wasi" \
