@@ -56,6 +56,7 @@ FunctionPass *createWebAssemblyDebugFixup();
 FunctionPass *createWebAssemblyPeephole();
 FunctionPass *createWebAssemblyMemorySafetyPass();
 ModulePass *createWebAssemblyMCLowerPrePass();
+ModulePass *createWebAssemblyMemorySafetyCustomSectionPass(); 
 
 // PassRegistry initialization declarations.
 void initializeFixFunctionBitcastsPass(PassRegistry &);
@@ -85,6 +86,7 @@ void initializeWebAssemblyRegStackifyPass(PassRegistry &);
 void initializeWebAssemblyReplacePhysRegsPass(PassRegistry &);
 void initializeWebAssemblySetP2AlignOperandsPass(PassRegistry &);
 void initializeWebAssemblyMemorySafetyPass(PassRegistry &);
+void initializeWebAssemblyMemorySafetyCustomSectionPassPass(PassRegistry &);
 
 namespace WebAssembly {
 enum TargetIndex {
