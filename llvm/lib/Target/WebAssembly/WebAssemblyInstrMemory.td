@@ -181,7 +181,7 @@ defm SEGMENT_NEW_A64 : I<(outs I64:$dst),
                                [],
                                "segment.new\t$dst, ${off}(${sp})${p2align}, $size", "segment.new\t${off}${p2align}",
                                0xfa00, false>,
-                        Requires<[HasAddr64]>; // HasMemSafety
+                        Requires<[HasAddr64, HasMemSafety]>;
 
 defm SEGMENT_SET_TAG_A64 : I<(outs),
                                 (ins P2Align:$p2align, offset64_op:$off, I64:$addr, I64:$sp, I64:$size),
@@ -190,7 +190,7 @@ defm SEGMENT_SET_TAG_A64 : I<(outs),
                                 [],
                                 "segment.set_tag\t${off}(${addr})${p2align}, $sp, $size", "segment.set_tag\t${off}${p2align}",
                                 0xfa01, false>,
-                        Requires<[HasAddr64]>; // HasMemSafety
+                        Requires<[HasAddr64, HasMemSafety]>;
 defm SEGMENT_FREE_A64 : I<(outs),
                         (ins P2Align:$p2align, offset64_op:$off, I64:$addr, I64:$size),
                         (outs),
@@ -198,7 +198,7 @@ defm SEGMENT_FREE_A64 : I<(outs),
                         [],
                         "segment.free\t${off}(${addr})${p2align}, $size", "segment.free\t${off}${p2align}",
                         0xfa02, false>,
-                        Requires<[HasAddr64]>; // HasMemSafety
+                        Requires<[HasAddr64, HasMemSafety]>;
 }
 
 def : Pat<(int_wasm_segment_new (AddrOps64 offset64_op:$offset, I64:$addr), I64:$size),
