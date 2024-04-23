@@ -1133,6 +1133,8 @@ static bool isSanitizer(lltok::Kind Kind) {
   case lltok::kw_no_sanitize_hwaddress:
   case lltok::kw_sanitize_memtag:
   case lltok::kw_sanitize_address_dyninit:
+  case lltok::kw_sanitize_wasm_ptr_auth:
+  case lltok::kw_sanitize_wasm_mem_safety:
     return true;
   default:
     return false;

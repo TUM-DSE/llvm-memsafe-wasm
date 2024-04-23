@@ -583,6 +583,7 @@ lltok::Kind LLLexer::LexIdentifier() {
   KEYWORD(no_sanitize_address);
   KEYWORD(no_sanitize_hwaddress);
   KEYWORD(sanitize_address_dyninit);
+  KEYWORD(sanitize_wasm_ptr_auth);
 
   KEYWORD(ccc);
   KEYWORD(fastcc);

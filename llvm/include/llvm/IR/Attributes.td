@@ -279,6 +279,9 @@ def SanitizeMemTag : EnumAttr<"sanitize_memtag", [FnAttr]>;
 /// WasmMemTagSanitizer is on.
 def SanitizeWasmMemSafety : EnumAttr<"sanitize_wasm_mem_safety", [FnAttr]>;
 
+/// WasmPtrAuthSanitizer is on.
+def SanitizeWasmPtrAuth : EnumAttr<"sanitize_wasm_ptr_auth", [FnAttr]>;
+
 /// Speculative Load Hardening is enabled.
 ///
 /// Note that this uses the default compatibility (always compatible during

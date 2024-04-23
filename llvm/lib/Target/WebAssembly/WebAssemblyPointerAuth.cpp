@@ -1,0 +1,257 @@
+//===- WebAssemblyPointerAuth.cpp - Memory Safety for WASM --===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+//===----------------------------------------------------------------------===//
+
+#include "WebAssembly.h"
+#include "llvm/ADT/APInt.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DepthFirstIterator.h"
+#include "llvm/ADT/MapVector.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/Statistic.h"
+#include "llvm/Analysis/AliasAnalysis.h"
+#include "llvm/Analysis/CFG.h"
+#include "llvm/Analysis/LoopInfo.h"
+#include "llvm/Analysis/PostDominators.h"
+#include "llvm/Analysis/ScalarEvolution.h"
+#include "llvm/Analysis/ScalarEvolutionExpressions.h"
+#include "llvm/Analysis/StackSafetyAnalysis.h"
+#include "llvm/Analysis/TargetLibraryInfo.h"
+#include "llvm/Analysis/ValueTracking.h"
+#include "llvm/CodeGen/LiveRegUnits.h"
+#include "llvm/CodeGen/MachineBasicBlock.h"
+#include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineFunctionPass.h"
+#include "llvm/CodeGen/MachineInstr.h"
+#include "llvm/CodeGen/MachineInstrBuilder.h"
+#include "llvm/CodeGen/MachineLoopInfo.h"
+#include "llvm/CodeGen/MachineOperand.h"
+#include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/TargetPassConfig.h"
+#include "llvm/CodeGen/TargetRegisterInfo.h"
+#include "llvm/IR/Attributes.h"
+#include "llvm/IR/BasicBlock.h"
+#include "llvm/IR/Constants.h"
+#include "llvm/IR/DebugLoc.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/Dominators.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/GetElementPtrTypeIterator.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/InstIterator.h"
+#include "llvm/IR/InstVisitor.h"
+#include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/Instruction.h"
+#include "llvm/IR/Instructions.h"
+#include "llvm/IR/IntrinsicInst.h"
+#include "llvm/IR/Intrinsics.h"
+#include "llvm/IR/IntrinsicsWebAssembly.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Metadata.h"
+#include "llvm/IR/Value.h"
+#include "llvm/IR/ValueHandle.h"
+#include "llvm/InitializePasses.h"
+#include "llvm/Pass.h"
+#include "llvm/Support/Alignment.h"
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/Debug.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/Utils/BuildLibCalls.h"
+#include "llvm/Transforms/Utils/Local.h"
+#include "llvm/Transforms/Utils/MemoryTaggingSupport.h"
+#include <algorithm>
+#include <cassert>
+#include <list>
+#include <memory>
+#include <utility>
+
+using namespace llvm;
+
+#define DEBUG_TYPE "wasm-ptr-auth"
+
+namespace {
+
+class WebAssemblyPointerAuth : public ModulePass,
+                               public InstVisitor<WebAssemblyPointerAuth> {
+
+public:
+  static char ID;
+
+  WebAssemblyPointerAuth() : ModulePass(ID) {
+    initializeWebAssemblyPointerAuthPass(*PassRegistry::getPassRegistry());
+  }
+
+  bool runOnModule(Module &M) override;
+
+  StringRef getPassName() const override {
+    return "WebAssembly Pointer Authentication";
+  }
+
+  void visitCallBase(CallBase &CB);
+
+  void visitInstruction(Instruction &I);
+
+private:
+  void getAnalysisUsage(AnalysisUsage &AU) const override {
+    AU.setPreservesCFG();
+  }
+
+  // Recursive function to find GEP paths leading to functions
+  void findFunctionGEP(Constant *C, std::vector<unsigned> &Indices,
+                       std::vector<std::vector<unsigned>> &GepPaths) {
+    if (auto *CE = dyn_cast<Function>(C)) {
+      GepPaths.push_back(Indices);
+    } else if (auto *CA = dyn_cast<ConstantArray>(C)) {
+      for (unsigned I = 0; I < CA->getNumOperands(); I++) {
+        Indices.push_back(I);
+        findFunctionGEP(CA->getOperand(I), Indices, GepPaths);
+        Indices.pop_back();
+      }
+    } else if (auto *CS = dyn_cast<ConstantStruct>(C)) {
+      for (unsigned I = 0; I < CS->getNumOperands(); I++) {
+        Indices.push_back(I);
+        findFunctionGEP(CS->getOperand(I), Indices, GepPaths);
+        Indices.pop_back();
+      }
+    }
+  }
+
+  void signVTables(Module &M) {
+    FunctionType *FuncType =
+        FunctionType::get(Type::getVoidTy(M.getContext()), false);
+    Function *InitFunction = Function::Create(
+        FuncType, Function::InternalLinkage, "init_globals", &M);
+
+    BasicBlock *Entry =
+        BasicBlock::Create(M.getContext(), "entry", InitFunction);
+    IRBuilder<> IRB(Entry);
+
+    auto *PointerSignIntr =
+        Intrinsic::getDeclaration(&M, Intrinsic::wasm_pointer_sign);
+
+    for (GlobalVariable &GV : M.globals()) {
+      std::vector<unsigned> Indices{};
+      std::vector<std::vector<unsigned>> GepPaths{};
+      if (!GV.hasInitializer()) {
+        continue;
+      }
+      findFunctionGEP(GV.getInitializer(), Indices, GepPaths);
+      for (auto GepPath : GepPaths) {
+        std::vector<Value *> GepIndices{IRB.getInt32(0)};
+        for (auto Index : GepPath) {
+          GepIndices.emplace_back(IRB.getInt32(Index));
+        }
+        Value *GEP = IRB.CreateGEP(GV.getValueType(), &GV, GepIndices);
+
+        auto *Value = IRB.CreateLoad(IRB.getPtrTy(), GEP);
+        auto *SignedValue =
+            IRB.CreateCall(PointerSignIntr, {Value, IRB.getInt64(0)});
+        IRB.CreateStore(SignedValue, GEP);
+      }
+    }
+
+    if (Entry->empty()) {
+      // we didn't find a global to instrument, so delete the function and early
+      // abort.
+      InitFunction->eraseFromParent();
+      return;
+    }
+
+    IRB.CreateRetVoid();
+
+    ConstantInt *Priority =
+        ConstantInt::get(Type::getInt32Ty(M.getContext()), -1);
+    auto *CtorEntryTy = StructType::get(
+        Type::getInt32Ty(M.getContext()), FuncType->getPointerTo(),
+        Type::getInt8Ty(M.getContext())->getPointerTo());
+
+    Constant *CtorEntry = ConstantStruct::get(
+        CtorEntryTy, {Priority, InitFunction,
+                      ConstantPointerNull::get(
+                          Type::getInt8Ty(M.getContext())->getPointerTo())});
+    ArrayType *CtorArrayType = ArrayType::get(CtorEntryTy, 1);
+
+    GlobalVariable *GlobalCtors = M.getNamedGlobal("llvm.global_ctors");
+    if (GlobalCtors) {
+      // Append to existing llvm.global_ctors
+      SmallVector<Constant *, 4> NewCtors;
+      if (auto *ExistingArray =
+              dyn_cast<ConstantArray>(GlobalCtors->getInitializer())) {
+        for (unsigned I = 0; I < ExistingArray->getNumOperands(); ++I) {
+          NewCtors.push_back(ExistingArray->getOperand(I));
+        }
+      }
+      NewCtors.push_back(CtorEntry);
+      GlobalCtors->setInitializer(ConstantArray::get(CtorArrayType, NewCtors));
+    } else {
+      // Create llvm.global_ctors if it doesn't exist
+      new GlobalVariable(
+          M, CtorArrayType, false, GlobalVariable::AppendingLinkage,
+          ConstantArray::get(CtorArrayType, {CtorEntry}), "llvm.global_ctors");
+    }
+  }
+};
+
+bool WebAssemblyPointerAuth::runOnModule(Module &M) {
+  signVTables(M);
+
+  bool Changed = true;
+  for (auto &F : M) {
+    Changed = false;
+
+    visit(F);
+  }
+  return Changed;
+}
+
+void WebAssemblyPointerAuth::visitCallBase(llvm::CallBase &CB) {
+  auto *Op = CB.getCalledOperand();
+  if (isa<Function>(Op)) {
+    return;
+  }
+
+  // otherwise, we assume Op is a function pointer
+  if (!Op->getType()->isPointerTy()) {
+    errs() << "Expected Op to be a function pointer.";
+  }
+
+  auto *PointerAuthIntr =
+      Intrinsic::getDeclaration(CB.getModule(), Intrinsic::wasm_pointer_auth);
+  IRBuilder<> IRB(&CB);
+  auto *AuthCallee =
+      IRB.CreateCall(PointerAuthIntr, {Op, IRB.getInt64(0)});
+  CB.setCalledOperand(AuthCallee);
+}
+
+void WebAssemblyPointerAuth::visitInstruction(llvm::Instruction &I) {
+  for (unsigned J = 0; J < I.getNumOperands(); ++J) {
+    if (auto *Fn = dyn_cast<Function>(I.getOperand(J))) {
+      IRBuilder<> IRB(&I);
+      auto *PointerSignIntr = Intrinsic::getDeclaration(
+          I.getModule(), Intrinsic::wasm_pointer_sign);
+      auto *SignedPtr = IRB.CreateCall(PointerSignIntr, {Fn, IRB.getInt64(0)});
+      I.setOperand(J, SignedPtr);
+    }
+  }
+}
+
+} // namespace
+
+char WebAssemblyPointerAuth::ID = 0;
+
+INITIALIZE_PASS_BEGIN(WebAssemblyPointerAuth, DEBUG_TYPE,
+                      "WebAssembly Pointer Authentication", false, false)
+INITIALIZE_PASS_END(WebAssemblyPointerAuth, DEBUG_TYPE,
+                    "WebAssembly Pointer Authentication", false, false)
+
+ModulePass *llvm::createWebAssemblyPointerAuthPass() {
+  return new WebAssemblyPointerAuth();
+}
+
+#undef DEBUG_TYPE

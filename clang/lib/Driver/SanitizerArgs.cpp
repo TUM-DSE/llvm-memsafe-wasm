@@ -1404,6 +1404,9 @@ void SanitizerArgs::addArgs(const ToolChain &TC, const llvm::opt::ArgList &Args,
    if (Sanitizers.has(SanitizerKind::WasmMemsafety) &&
        !hasTargetFeatureWasmMemSafety(CmdArgs))
        TC.getDriver().Diag(diag::err_wasm_mem_safety_requires_wasm_extension);
+   if (Sanitizers.has(SanitizerKind::WasmPtrAuth) &&
+       !hasTargetFeatureWasmMemSafety(CmdArgs))
+       TC.getDriver().Diag(diag::err_wasm_mem_safety_requires_wasm_extension);
 }
 
 SanitizerMask parseArgValues(const Driver &D, const llvm::opt::Arg *A,

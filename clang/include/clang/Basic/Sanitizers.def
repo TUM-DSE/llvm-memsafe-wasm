@@ -64,6 +64,9 @@ SANITIZER_GROUP("memtag", MemTag, MemtagStack | MemtagHeap | MemtagGlobals)
 // A variant of AddressSanitizer using WASM
 SANITIZER("wasm-memsafety", WasmMemsafety)
 
+// A variant of AddressSanitizer using WASM
+SANITIZER("wasm-ptr-auth", WasmPtrAuth)
+
 // MemorySanitizer
 SANITIZER("memory", Memory)
 

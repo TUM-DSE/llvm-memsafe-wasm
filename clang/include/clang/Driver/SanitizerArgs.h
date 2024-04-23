@@ -119,6 +119,9 @@ public:
   bool hasWasmMemSafety() const {
     return Sanitizers.has(SanitizerKind::WasmMemsafety);
   }
+  bool hasWasmPtrAuth() const {
+    return Sanitizers.has(SanitizerKind::WasmPtrAuth);
+  }
   const std::string &getMemtagMode() const {
     assert(!MemtagMode.empty());
     return MemtagMode;

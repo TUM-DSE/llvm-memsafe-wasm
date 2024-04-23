@@ -411,6 +411,7 @@ static bool initTargetOptions(DiagnosticsEngine &Diags,
   Options.Hotpatch = CodeGenOpts.HotPatch;
   Options.JMCInstrument = CodeGenOpts.JMCInstrument;
   Options.XCOFFReadOnlyPointers = CodeGenOpts.XCOFFReadOnlyPointers;
+  Options.WasmPtrAuth = LangOpts.Sanitize.has(SanitizerKind::WasmPtrAuth);
 
   switch (CodeGenOpts.getSwiftAsyncFramePointer()) {
   case CodeGenOptions::SwiftAsyncFramePointerKind::Auto:

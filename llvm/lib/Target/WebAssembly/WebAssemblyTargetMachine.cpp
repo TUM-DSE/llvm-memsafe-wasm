@@ -92,6 +92,7 @@ extern "C" LLVM_EXTERNAL_VISIBILITY void LLVMInitializeWebAssemblyTarget() {
   initializeWebAssemblyFixBrTableDefaultsPass(PR);
   initializeWebAssemblyDAGToDAGISelPass(PR);
   initializeWebAssemblyMemorySafetyPass(PR);
+  initializeWebAssemblyPointerAuthPass(PR);
 }
 
 //===----------------------------------------------------------------------===//
@@ -464,6 +465,9 @@ void WebAssemblyPassConfig::addIRPasses() {
   addPass(createIndirectBrExpandPass());
 
   addPass(createWebAssemblyMemorySafetyPass());
+  if (TM->Options.WasmPtrAuth) {
+    addPass(createWebAssemblyPointerAuthPass());
+  }
 
   TargetPassConfig::addIRPasses();
 }

@@ -72,3 +72,4 @@ pythonenv*
 
 .direnv
 /*.wasm
+cmake-build-*
