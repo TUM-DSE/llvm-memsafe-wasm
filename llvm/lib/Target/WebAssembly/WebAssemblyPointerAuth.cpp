@@ -136,6 +136,10 @@ private:
         Intrinsic::getDeclaration(&M, Intrinsic::wasm_pointer_sign);
 
     for (GlobalVariable &GV : M.globals()) {
+      if (GV.getName() == "llvm.used") {
+        continue;
+      }
+
       std::vector<unsigned> Indices{};
       std::vector<std::vector<unsigned>> GepPaths{};
       if (!GV.hasInitializer()) {
