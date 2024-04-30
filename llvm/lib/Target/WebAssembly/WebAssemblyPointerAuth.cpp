@@ -233,9 +233,19 @@ void WebAssemblyPointerAuth::visitCallBase(llvm::CallBase &CB) {
 }
 
 void WebAssemblyPointerAuth::visitInstruction(llvm::Instruction &I) {
+  IRBuilder<> IRB(&I);
+  auto *PhiNode = dyn_cast<PHINode>(&I);
+
   for (unsigned J = 0; J < I.getNumOperands(); ++J) {
     if (auto *Fn = dyn_cast<Function>(I.getOperand(J))) {
-      IRBuilder<> IRB(&I);
+      if (PhiNode != nullptr) {
+        auto *IncomingBlock = PhiNode->getIncomingBlock(J);
+        if (auto *Term = IncomingBlock->getTerminator()) {
+          IRB.SetInsertPoint(Term);
+        } else {
+          IRB.SetInsertPoint(IncomingBlock);
+        }
+      }
       auto *PointerSignIntr = Intrinsic::getDeclaration(
           I.getModule(), Intrinsic::wasm_pointer_sign);
       auto *SignedPtr = IRB.CreateCall(PointerSignIntr, {Fn, IRB.getInt64(0)});
