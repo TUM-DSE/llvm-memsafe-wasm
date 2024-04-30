@@ -211,14 +211,17 @@ bool WebAssemblyPointerAuth::runOnModule(Module &M) {
 }
 
 void WebAssemblyPointerAuth::visitCallBase(llvm::CallBase &CB) {
+  if (!CB.isIndirectCall()) {
+    return;
+  }
   auto *Op = CB.getCalledOperand();
   if (isa<Function>(Op)) {
-    return;
+    llvm_unreachable("Expected Op to be a function pointer.");
   }
 
   // otherwise, we assume Op is a function pointer
   if (!Op->getType()->isPointerTy()) {
-    errs() << "Expected Op to be a function pointer.";
+    llvm_unreachable("Expected Op to be a function pointer.");
   }
 
   auto *PointerAuthIntr =
