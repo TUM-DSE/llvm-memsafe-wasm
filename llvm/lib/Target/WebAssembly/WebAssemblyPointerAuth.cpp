@@ -238,6 +238,9 @@ void WebAssemblyPointerAuth::visitInstruction(llvm::Instruction &I) {
 
   for (unsigned J = 0; J < I.getNumOperands(); ++J) {
     if (auto *Fn = dyn_cast<Function>(I.getOperand(J))) {
+      if (Fn->isIntrinsic()) {
+        continue;
+      }
       if (PhiNode != nullptr) {
         auto *IncomingBlock = PhiNode->getIncomingBlock(J);
         if (auto *Term = IncomingBlock->getTerminator()) {
