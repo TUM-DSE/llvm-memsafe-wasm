@@ -19862,7 +19862,7 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
     llvm::Type *IntTy = llvm::Type::getInt64Ty(Builder.getContext());
     Value *Ptr = EmitScalarExpr(E->getArg(0));
     Value *IntPtr = Builder.CreateIntToPtr(Ptr, IntTy);
-    Value *BitMask = llvm::ConstantInt::get(IntTy, 0x0000'FFFF'FFFF'FFFF, false);
+    Value *BitMask = llvm::ConstantInt::get(IntTy, 0xFF00'FFFF'FFFF'FFFF, false);
     Value *StrippedPtr = Builder.CreateBinOp(llvm::Instruction::BinaryOps::And, IntPtr, BitMask);
     return Builder.CreateIntToPtr(StrippedPtr, ConvertType(E->getType()));
   }
@@ -19872,8 +19872,8 @@ Value *CodeGenFunction::EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
     Value *Tag = EmitScalarExpr(E->getArg(1));
     Value *IntPtr = Builder.CreatePtrToInt(Ptr, IntTy);
     Value *IntTag = Builder.CreatePtrToInt(Tag, IntTy);
-    Value *BitMask = llvm::ConstantInt::get(IntTy, 0x0000'FFFF'FFFF'FFFF, false);
-    Value *BitMaskTag = llvm::ConstantInt::get(IntTy, 0xFFFF'0000'0000'0000, false);
+    Value *BitMask = llvm::ConstantInt::get(IntTy, 0xFF00'FFFF'FFFF'FFFF, false);
+    Value *BitMaskTag = llvm::ConstantInt::get(IntTy, 0x00FF'0000'0000'0000, false);
     IntTag = Builder.CreateBinOp(llvm::Instruction::BinaryOps::And, IntTag, BitMaskTag);
     Value *StrippedPtr = Builder.CreateBinOp(llvm::Instruction::BinaryOps::And, IntPtr, BitMask);
     Value *TaggedPtr = Builder.CreateBinOp(llvm::Instruction::BinaryOps::Or, StrippedPtr, IntTag);
