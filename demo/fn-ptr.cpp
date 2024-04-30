@@ -1,29 +1,26 @@
+#include <iostream>
 
+extern "C" {
+unsigned long __cxa_allocate_exception(unsigned long) { abort(); }
+
+void __cxa_throw(unsigned long, unsigned long, unsigned long) { abort(); }
+}
 
 class X {
 public:
-  virtual int print() { return 0; }
+  virtual int print() {
+    std::cout << "X::print\n";
+    return 0;
+  }
 };
 
 class Y : public X {
 public:
-  int print() override { return 1; }
-};
-
-int func1(int a, int b) { return a + b; }
-
-typedef int (*fn)(int, int);
-
-fn add() { return func1; }
-
-fn x = func1;
-
-int call(fn f) {
-  if (!f) {
-    return 0;
+  int print() override {
+    std::cout << "Y::print\n";
+    return 1;
   }
-  return f(1, 2);
-}
+};
 
 int inner(X *x) { return x->print(); }
 
