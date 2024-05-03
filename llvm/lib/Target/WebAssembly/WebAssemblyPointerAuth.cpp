@@ -70,6 +70,7 @@
 #include <list>
 #include <memory>
 #include <utility>
+#include "llvm/Transforms/Utils/ModuleUtils.h"
 
 using namespace llvm;
 
@@ -169,36 +170,7 @@ private:
 
     IRB.CreateRetVoid();
 
-    ConstantInt *Priority =
-        ConstantInt::get(Type::getInt32Ty(M.getContext()), -1);
-    auto *CtorEntryTy = StructType::get(
-        Type::getInt32Ty(M.getContext()), FuncType->getPointerTo(),
-        Type::getInt8Ty(M.getContext())->getPointerTo());
-
-    Constant *CtorEntry = ConstantStruct::get(
-        CtorEntryTy, {Priority, InitFunction,
-                      ConstantPointerNull::get(
-                          Type::getInt8Ty(M.getContext())->getPointerTo())});
-    ArrayType *CtorArrayType = ArrayType::get(CtorEntryTy, 1);
-
-    GlobalVariable *GlobalCtors = M.getNamedGlobal("llvm.global_ctors");
-    if (GlobalCtors) {
-      // Append to existing llvm.global_ctors
-      SmallVector<Constant *, 4> NewCtors;
-      if (auto *ExistingArray =
-              dyn_cast<ConstantArray>(GlobalCtors->getInitializer())) {
-        for (unsigned I = 0; I < ExistingArray->getNumOperands(); ++I) {
-          NewCtors.push_back(ExistingArray->getOperand(I));
-        }
-      }
-      NewCtors.push_back(CtorEntry);
-      GlobalCtors->setInitializer(ConstantArray::get(CtorArrayType, NewCtors));
-    } else {
-      // Create llvm.global_ctors if it doesn't exist
-      new GlobalVariable(
-          M, CtorArrayType, false, GlobalVariable::AppendingLinkage,
-          ConstantArray::get(CtorArrayType, {CtorEntry}), "llvm.global_ctors");
-    }
+    appendToGlobalCtors(M, InitFunction, -1);
   }
 };
 

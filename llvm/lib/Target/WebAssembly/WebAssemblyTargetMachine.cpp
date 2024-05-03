@@ -439,6 +439,10 @@ void WebAssemblyPassConfig::addIRPasses() {
   if (getOptLevel() != CodeGenOptLevel::None)
     addPass(createWebAssemblyOptimizeReturned());
 
+  if (TM->Options.WasmPtrAuth) {
+    addPass(createWebAssemblyPointerAuthPass());
+  }
+
   basicCheckForEHAndSjLj(TM);
 
   // If exception handling is not enabled and setjmp/longjmp handling is
@@ -465,9 +469,6 @@ void WebAssemblyPassConfig::addIRPasses() {
   addPass(createIndirectBrExpandPass());
 
   addPass(createWebAssemblyMemorySafetyPass());
-  if (TM->Options.WasmPtrAuth) {
-    addPass(createWebAssemblyPointerAuthPass());
-  }
 
   TargetPassConfig::addIRPasses();
 }
