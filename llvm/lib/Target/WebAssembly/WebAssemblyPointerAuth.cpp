@@ -137,7 +137,7 @@ private:
         Intrinsic::getDeclaration(&M, Intrinsic::wasm_pointer_sign);
 
     for (GlobalVariable &GV : M.globals()) {
-      if (GV.getName() == "llvm.used") {
+      if (GV.getName() == "llvm.used" || GV.getName() == "llvm.global_ctors" || GV.getName() == "llvm.global_dtors") {
         continue;
       }
 
