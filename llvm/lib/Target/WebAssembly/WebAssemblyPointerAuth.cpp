@@ -98,6 +98,8 @@ public:
 
   void visitInstruction(Instruction &I);
 
+  Value *instrumentValue(Value *Val, IRBuilder<> &IRB);
+
 private:
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
@@ -183,6 +185,7 @@ bool WebAssemblyPointerAuth::runOnModule(Module &M) {
 
     visit(F);
   }
+  M.dump();
   return Changed;
 }
 
@@ -199,37 +202,41 @@ void WebAssemblyPointerAuth::visitCallBase(llvm::CallBase &CB) {
     CB.setCalledOperand(AuthCallee);
   }
 
-  visitInstruction(CB);
+  IRBuilder<> IRB(&CB);
+  for (unsigned I = 0; I < CB.arg_size(); ++I) {
+    if (auto *SignedPtr = instrumentValue(CB.getArgOperand(I), IRB)) {
+      CB.setArgOperand(I, SignedPtr);
+    }
+  }
 }
 
 void WebAssemblyPointerAuth::visitInstruction(llvm::Instruction &I) {
   IRBuilder<> IRB(&I);
   auto *PhiNode = dyn_cast<PHINode>(&I);
 
-  unsigned J = 0;
-  if (isa<CallBase>(&I)) {
-    // we skip the callee in the case of a call
-    J = 1;
-  }
-  for (; J < I.getNumOperands(); ++J) {
-    if (auto *Fn = dyn_cast<Function>(I.getOperand(J))) {
-      if (Fn->isIntrinsic()) {
-        continue;
+  for (unsigned J = 0; J < I.getNumOperands(); ++J) {
+    if (PhiNode != nullptr) {
+      auto *IncomingBlock = PhiNode->getIncomingBlock(J);
+      if (auto *Term = IncomingBlock->getTerminator()) {
+        IRB.SetInsertPoint(Term);
+      } else {
+        IRB.SetInsertPoint(IncomingBlock);
       }
-      if (PhiNode != nullptr) {
-        auto *IncomingBlock = PhiNode->getIncomingBlock(J);
-        if (auto *Term = IncomingBlock->getTerminator()) {
-          IRB.SetInsertPoint(Term);
-        } else {
-          IRB.SetInsertPoint(IncomingBlock);
-        }
-      }
-      auto *PointerSignIntr = Intrinsic::getDeclaration(
-          I.getModule(), Intrinsic::wasm_pointer_sign);
-      auto *SignedPtr = IRB.CreateCall(PointerSignIntr, {Fn, IRB.getInt64(0)});
+    }
+    if (auto *SignedPtr = instrumentValue(I.getOperand(J), IRB)) {
       I.setOperand(J, SignedPtr);
     }
   }
+}
+
+Value *WebAssemblyPointerAuth::instrumentValue(Value *Val, IRBuilder<> &IRB) {
+  auto *Fn = dyn_cast<Function>(Val);
+  if (Fn == nullptr || Fn->isIntrinsic()) {
+    return nullptr;
+  }
+    auto *PointerSignIntr = Intrinsic::getDeclaration(
+        IRB.GetInsertBlock()->getModule(), Intrinsic::wasm_pointer_sign);
+    return IRB.CreateCall(PointerSignIntr, {Fn, IRB.getInt64(0)});
 }
 
 } // namespace
