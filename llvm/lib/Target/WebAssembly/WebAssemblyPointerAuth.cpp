@@ -170,7 +170,7 @@ private:
 
     IRB.CreateRetVoid();
 
-    appendToGlobalCtors(M, InitFunction, -1);
+    appendToGlobalCtors(M, InitFunction, 0);
   }
 };
 
