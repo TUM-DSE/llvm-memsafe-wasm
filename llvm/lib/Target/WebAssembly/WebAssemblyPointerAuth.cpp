@@ -187,32 +187,31 @@ bool WebAssemblyPointerAuth::runOnModule(Module &M) {
 }
 
 void WebAssemblyPointerAuth::visitCallBase(llvm::CallBase &CB) {
-  if (!CB.isIndirectCall()) {
-    return;
-  }
-  auto *Op = CB.getCalledOperand();
-  if (isa<Function>(Op)) {
-    llvm_unreachable("Expected Op to be a function pointer.");
+  if (CB.isIndirectCall()) {
+    auto *Op = CB.getCalledOperand();
+    assert(Op->getType()->isPointerTy() && "Expected Op to be a function pointer.");
+
+    auto *PointerAuthIntr =
+        Intrinsic::getDeclaration(CB.getModule(), Intrinsic::wasm_pointer_auth);
+    IRBuilder<> IRB(&CB);
+    auto *AuthCallee =
+        IRB.CreateCall(PointerAuthIntr, {Op, IRB.getInt64(0)});
+    CB.setCalledOperand(AuthCallee);
   }
 
-  // otherwise, we assume Op is a function pointer
-  if (!Op->getType()->isPointerTy()) {
-    llvm_unreachable("Expected Op to be a function pointer.");
-  }
-
-  auto *PointerAuthIntr =
-      Intrinsic::getDeclaration(CB.getModule(), Intrinsic::wasm_pointer_auth);
-  IRBuilder<> IRB(&CB);
-  auto *AuthCallee =
-      IRB.CreateCall(PointerAuthIntr, {Op, IRB.getInt64(0)});
-  CB.setCalledOperand(AuthCallee);
+  visitInstruction(CB);
 }
 
 void WebAssemblyPointerAuth::visitInstruction(llvm::Instruction &I) {
   IRBuilder<> IRB(&I);
   auto *PhiNode = dyn_cast<PHINode>(&I);
 
-  for (unsigned J = 0; J < I.getNumOperands(); ++J) {
+  unsigned J = 0;
+  if (isa<CallBase>(&I)) {
+    // we skip the callee in the case of a call
+    J = 1;
+  }
+  for (; J < I.getNumOperands(); ++J) {
     if (auto *Fn = dyn_cast<Function>(I.getOperand(J))) {
       if (Fn->isIntrinsic()) {
         continue;
