@@ -185,7 +185,6 @@ bool WebAssemblyPointerAuth::runOnModule(Module &M) {
 
     visit(F);
   }
-  M.dump();
   return Changed;
 }
 
