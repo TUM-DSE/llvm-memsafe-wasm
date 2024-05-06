@@ -31,6 +31,7 @@
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/CodeGen.h"
 #include "llvm/Target/TargetOptions.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/LowerAtomicPass.h"
 #include "llvm/Transforms/Utils.h"
@@ -469,6 +470,9 @@ void WebAssemblyPassConfig::addIRPasses() {
   addPass(createIndirectBrExpandPass());
 
   addPass(createWebAssemblyMemorySafetyPass());
+  if (getOptLevel() != CodeGenOptLevel::None) {
+    addPass(createInstructionCombiningPass());
+  }
 
   TargetPassConfig::addIRPasses();
 }

@@ -62,6 +62,7 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Utils/BuildLibCalls.h"
 #include "llvm/Transforms/Utils/Local.h"
 #include "llvm/Transforms/Utils/MemoryTaggingSupport.h"
@@ -176,7 +177,6 @@ public:
 private:
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.setPreservesCFG();
-//    AU.addRequiredTransitive<TargetLibraryInfoWrapperPass>();
   }
 
   Value *alignAllocSize(Value *AllocSize, Instruction *InsertBefore) {
@@ -194,7 +194,6 @@ private:
 };
 
 bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
-  F.dump();
   if (!F.hasFnAttribute(Attribute::SanitizeWasmMemSafety) ||
       F.getName().starts_with("__wasm_memsafety_"))
     return false;
@@ -233,7 +232,6 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
   for (auto *Alloca : AllocaInsts) {
     Alloca->setAlignment(std::max(Alloca->getAlign(), Align(16)));
 
-    DataLayout DL = F.getParent()->getDataLayout();
     Value *AllocSize;
     if (Alloca->isArrayAllocation()) {
       auto ElementSize = DL.getTypeAllocSize(Alloca->getAllocatedType());
@@ -303,10 +301,9 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
   if (!AllocaInsts.empty() && !*FirstAllocaIsUntagged) {
     auto *InsertBefore = &F.getEntryBlock().front();
     new AllocaInst(Type::getInt8Ty(Ctx), 0, ConstantInt::get(Type::getInt64Ty(Ctx), 16), Align(16), "Guard", InsertBefore);
-    F.dump();
   }
 
-  return true;
+  return !AllocaInsts.empty();
 }
 
 } // namespace
