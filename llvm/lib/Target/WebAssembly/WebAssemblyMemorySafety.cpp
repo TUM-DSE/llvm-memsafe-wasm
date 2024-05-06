@@ -69,6 +69,7 @@
 #include <cassert>
 #include <list>
 #include <memory>
+#include <optional>
 #include <utility>
 
 using namespace llvm;
@@ -193,6 +194,7 @@ private:
 };
 
 bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
+  F.dump();
   if (!F.hasFnAttribute(Attribute::SanitizeWasmMemSafety) ||
       F.getName().starts_with("__wasm_memsafety_"))
     return false;
@@ -201,6 +203,7 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
   LLVMContext &Ctx(F.getContext());
 
   SmallVector<AllocaInst *, 8> AllocaInsts;
+  std::optional<bool> FirstAllocaIsUntagged{};
 
   for (auto &BB : F) {
     for (auto &I : BB) {
@@ -208,9 +211,13 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
         LLVM_DEBUG(dbgs() << "Checking alloca: " << *Alloca << "\n");
 
         SafeStackSlotAnalysis Analysis;
-        if (!Analysis.check(Alloca)) {
+        auto IsSafeAlloca = Analysis.check(Alloca);
+        if (!IsSafeAlloca) {
           LLVM_DEBUG(dbgs() << "Alloca potentially unsafe, instrumenting.\n");
           AllocaInsts.emplace_back(Alloca);
+        }
+        if (!FirstAllocaIsUntagged.has_value()) {
+          FirstAllocaIsUntagged = IsSafeAlloca;
         }
       }
     }
@@ -286,6 +293,17 @@ bool WebAssemblyMemorySafety::runOnFunction(Function &F) {
           FreeSegmentStackFunc, {NewStackSegmentInst, Alloca, AllocSize});
       FreeSegmentInst->insertBefore(Terminator);
     }
+  }
+
+  // If we have unsafe allocas and the first alloca in the function is not
+  // tagged, we insert an untagged guard slot. This ensures that we never have
+  // adjacent slots with the same random tag, even if we get a collision between
+  // different stack frames.
+  // It is safe to access FirstAllocaIsUntagged when we have AllocaInsts.
+  if (!AllocaInsts.empty() && !*FirstAllocaIsUntagged) {
+    auto *InsertBefore = &F.getEntryBlock().front();
+    new AllocaInst(Type::getInt8Ty(Ctx), 0, ConstantInt::get(Type::getInt64Ty(Ctx), 16), Align(16), "Guard", InsertBefore);
+    F.dump();
   }
 
   return true;
