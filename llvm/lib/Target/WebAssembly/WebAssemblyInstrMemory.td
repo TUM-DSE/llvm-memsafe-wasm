@@ -231,10 +231,10 @@ def : Pat<(int_wasm_segment_set_tag (AddrOps64 offset64_op:$offset, I64:$addr), 
           (!cast<NI>(SEGMENT_SET_TAG_A64) 0, offset64_op:$offset, I64:$addr, I64:$sp, I64:$size)>;
 def : Pat<(int_wasm_segment_free (AddrOps64 offset64_op:$offset, I64:$addr), I64:$size),
           (!cast<NI>(SEGMENT_FREE_A64) 0, offset64_op:$offset, I64:$addr, I64:$size)>;
-def : Pat<(int_wasm_pointer_sign I64:$ptr, I64:$mod),
-          (!cast<NI>(POINTER_SIGN_A64) I64:$ptr, I64:$mod)>;
-def : Pat<(int_wasm_pointer_auth I64:$ptr, I64:$mod),
-          (!cast<NI>(POINTER_AUTH_A64) I64:$ptr, I64:$mod)>;
+def : Pat<(int_wasm_pointer_sign I64:$ptr),
+          (!cast<NI>(POINTER_SIGN_A64) I64:$ptr)>;
+def : Pat<(int_wasm_pointer_auth I64:$ptr),
+          (!cast<NI>(POINTER_AUTH_A64) I64:$ptr)>;
 def : Pat<(int_wasm_pointer_strip I64:$ptr),
           (!cast<NI>(POINTER_STRIP_A64) I64:$ptr)>;
 

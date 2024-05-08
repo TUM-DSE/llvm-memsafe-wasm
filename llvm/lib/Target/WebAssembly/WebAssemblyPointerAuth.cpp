@@ -158,7 +158,7 @@ private:
 
         auto *Value = IRB.CreateLoad(IRB.getPtrTy(), GEP);
         auto *SignedValue =
-            IRB.CreateCall(PointerSignIntr, {Value, IRB.getInt64(0)});
+            IRB.CreateCall(PointerSignIntr, {Value});
         IRB.CreateStore(SignedValue, GEP);
       }
     }
@@ -235,7 +235,7 @@ Value *WebAssemblyPointerAuth::instrumentValue(Value *Val, IRBuilder<> &IRB) {
   }
     auto *PointerSignIntr = Intrinsic::getDeclaration(
         IRB.GetInsertBlock()->getModule(), Intrinsic::wasm_pointer_sign);
-    return IRB.CreateCall(PointerSignIntr, {Fn, IRB.getInt64(0)});
+    return IRB.CreateCall(PointerSignIntr, {Fn});
 }
 
 } // namespace
