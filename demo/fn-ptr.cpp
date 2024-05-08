@@ -1,3 +1,4 @@
+#include <stdio.h>
 #include <iostream>
 
 extern "C" {
@@ -9,7 +10,8 @@ void __cxa_throw(unsigned long, unsigned long, unsigned long) { abort(); }
 class X {
 public:
   virtual int print() {
-    std::cout << "X::print\n";
+    printf("X::print\n");
+    //std::cout << "X::print\n";
     return 0;
   }
 };
@@ -17,7 +19,8 @@ public:
 class Y : public X {
 public:
   int print() override {
-    std::cout << "Y::print\n";
+    printf("Y::print\n");
+    //std::cout << "Y::print\n";
     return 1;
   }
 };
