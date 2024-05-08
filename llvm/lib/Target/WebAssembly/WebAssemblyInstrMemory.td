@@ -201,18 +201,18 @@ defm SEGMENT_FREE_A64 : I<(outs),
                         Requires<[HasAddr64, HasMemSafety]>;
 
 defm POINTER_SIGN_A64 : I<(outs I64:$signed_ptr),
-                          (ins I64:$ptr, I64:$mod),
+                          (ins I64:$ptr),
                           (outs), (ins),
                           [],
-                          "i64.pointer_sign\t$signed_ptr, $ptr, $mod", "i64.pointer_sign",
+                          "i64.pointer_sign\t$signed_ptr, $ptr", "i64.pointer_sign",
                           0xfa04, false>,
                         Requires<[HasAddr64, HasMemSafety]>;
 
 defm POINTER_AUTH_A64 : I<(outs I64:$authed_ptr),
-                          (ins I64:$ptr, I64:$mod),
+                          (ins I64:$ptr),
                           (outs), (ins),
                           [],
-                          "i64.pointer_auth\t$authed_ptr, $ptr, $mod", "i64.pointer_auth",
+                          "i64.pointer_auth\t$authed_ptr, $ptr", "i64.pointer_auth",
                           0xfa05, false>,
                         Requires<[HasAddr64, HasMemSafety]>;
 
