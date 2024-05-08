@@ -197,7 +197,7 @@ void WebAssemblyPointerAuth::visitCallBase(llvm::CallBase &CB) {
         Intrinsic::getDeclaration(CB.getModule(), Intrinsic::wasm_pointer_auth);
     IRBuilder<> IRB(&CB);
     auto *AuthCallee =
-        IRB.CreateCall(PointerAuthIntr, {Op, IRB.getInt64(0)});
+        IRB.CreateCall(PointerAuthIntr, {Op});
     CB.setCalledOperand(AuthCallee);
   }
 
